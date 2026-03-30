@@ -130,8 +130,4 @@ limounifarah@gmail.com
 
 Built for industrial optimization ⚙️
 
-If you want, I can also:
 
-make it look more startup-style (like Stripe / Vercel README)
-or more technical (for engineers / recruiters)
-or even minimal one-page README (very clean for GitHub)

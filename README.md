@@ -1,6 +1,6 @@
-# 🔬 optiq - Intelligent Fractionation Optimization System
+🔬 optiq :
 
-## About the Project
+ About the Project
 
 optiq is a sophisticated AI-driven dashboard for monitoring and optimizing fractionation processes across industrial sectors:
 - **LNG Processing** - Liquefied Natural Gas fractionation
@@ -11,7 +11,7 @@ optiq is a sophisticated AI-driven dashboard for monitoring and optimizing fract
 
 The system uses predictive AI models to minimize energy consumption while maintaining strict quality standards, reducing operational costs and environmental impact.
 
----
+-
 
 ## 🎨 Brand Identity
 
@@ -421,5 +421,6 @@ For issues or questions:
 
 ---
 
-**Made with ❤️ for Industrial Optimization**#   o p t i q  
+**Made with ❤️ for Industrial Optimization**#   o p t i q 
+ 
  

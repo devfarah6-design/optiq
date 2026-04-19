@@ -101,7 +101,15 @@ class CompanyUpdate(BaseModel):
     background_color: Optional[str] = Field(None, pattern="^#[0-9A-Fa-f]{6}$")
     api_endpoint: Optional[str] = None
     is_active: Optional[bool] = None
+class ParetoSolution(BaseModel):
+    setpoints: List[float]     # [T1, T2, T3]
+    energy: float
+    purity: float
+    gain: float
 
+class ParetoOut(BaseModel):
+    solutions: List[ParetoSolution]
+    best_index: int            # the recommended balanced solution
 
 class CompanyOut(BaseModel):
     id: int

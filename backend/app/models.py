@@ -2,25 +2,31 @@
 OPTIQ DSS · Database Models
 """
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, DateTime,
-    Enum, JSON, Text, ForeignKey
+    Column, Integer, Float, Boolean,
+    Enum, JSON, Text, ForeignKey, DateTime,Sequence
 )
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
 
 
+# ── Helper ────────────────────────────────────────────────────────────────────
+def utcnow() -> datetime:
+    """Return current UTC time as a timezone-aware datetime."""
+    return datetime.now(timezone.utc)
+
+
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
+    ADMIN    = "admin"
     OPERATOR = "operator"
-    VIEWER = "viewer"
+    VIEWER   = "viewer"
 
 
 class AlertSeverity(str, enum.Enum):
-    INFO = "info"
-    WARNING = "warning"
+    INFO     = "info"
+    WARNING  = "warning"
     CRITICAL = "critical"
 
 
@@ -28,55 +34,53 @@ class AlertSeverity(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(64), unique=True, nullable=False, index=True)
-    hashed_password = Column(String(256), nullable=False)
-    role = Column(Enum(UserRole), default=UserRole.OPERATOR, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    id              = Column(Integer, primary_key=True, index=True)
+    username        = Column(Text, unique=True, nullable=False, index=True)
+    hashed_password = Column(Text, nullable=False)
+    role            = Column(Enum(UserRole), default=UserRole.OPERATOR, nullable=False)
+    is_active       = Column(Boolean, default=True)
+    created_at      = Column(DateTime(timezone=True), default=utcnow)
+    company_id      = Column(Integer, ForeignKey("companies.id"), nullable=True)
 
 
 # ── Company Branding ──────────────────────────────────────────────────────────
 class Company(Base):
-    """Multi-tenant company branding configuration."""
     __tablename__ = "companies"
 
-    id = Column(Integer, primary_key=True, index=True)
-    slug = Column(String(64), unique=True, nullable=False, index=True)
-    name = Column(String(128), nullable=False)
-    sector = Column(String(64), default="LNG")
-
-    # Branding
-    logo_url = Column(Text, nullable=True)
-    primary_color = Column(String(7), default="#00D9FF")   # hex
-    accent_color = Column(String(7), default="#FFD700")
-    background_color = Column(String(7), default="#0D1B2A")
-
-    # API / integration
-    api_endpoint = Column(Text, nullable=True)
-
-    # Metadata
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id               = Column(Integer, primary_key=True, index=True)
+    slug             = Column(Text, unique=True, nullable=False, index=True)
+    name             = Column(Text, nullable=False)
+    sector           = Column(Text, default="LNG")
+    logo_url         = Column(Text, nullable=True)
+    primary_color    = Column(Text, default="#00D9FF")
+    accent_color     = Column(Text, default="#FFD700")
+    background_color = Column(Text, default="#0D1B2A")
+    api_endpoint     = Column(Text, nullable=True)
+    is_active        = Column(Boolean, default=True)
+    created_at       = Column(DateTime(timezone=True), default=utcnow)
+    updated_at       = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     users = relationship("User", backref="company", foreign_keys=[User.company_id])
 
 
 # ── Predictions ───────────────────────────────────────────────────────────────
+prediction_id_seq = Sequence('prediction_id_seq')
+
 class Prediction(Base):
     __tablename__ = "predictions"
 
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    readings = Column(JSON, nullable=False)
-    energy = Column(Float, nullable=False)
-    purity = Column(Float, nullable=False)
-    stability = Column(Float, default=0.0)
-    model_type = Column(String(32), default="xgboost")
-    confidence = Column(Float, default=1.0)
-    is_outlier = Column(Boolean, default=False)
+    id            = Column(Integer, prediction_id_seq,
+                           server_default=prediction_id_seq.next_value(),
+                           nullable=False, index=True)
+    timestamp     = Column(DateTime(timezone=True), default=utcnow,
+                           nullable=False, primary_key=True)
+    readings      = Column(JSON, nullable=False)
+    energy        = Column(Float, nullable=False)
+    purity        = Column(Float, nullable=False)
+    stability     = Column(Float, default=0.0)
+    model_type    = Column(Text, default="xgboost")
+    confidence    = Column(Float, default=1.0)
+    is_outlier    = Column(Boolean, default=False)
     outlier_score = Column(Float, default=0.0)
 
 
@@ -84,24 +88,24 @@ class Prediction(Base):
 class Alert(Base):
     __tablename__ = "alerts"
 
-    id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime, default=datetime.utcnow, index=True)
-    alert_type = Column(String(32), nullable=False)       # stuck_sensor | outlier | drift
-    severity = Column(Enum(AlertSeverity), default=AlertSeverity.INFO)
-    tag_name = Column(String(64), nullable=False)
-    value = Column(Float, nullable=True)
-    threshold = Column(Float, nullable=True)
-    z_score = Column(Float, nullable=True)
-    description = Column(Text, nullable=False)
-    acknowledged = Column(Boolean, default=False)
-    acknowledged_by = Column(String(64), nullable=True)
+    id              = Column(Integer, primary_key=True, index=True)
+    timestamp       = Column(DateTime(timezone=True), default=utcnow, index=True)
+    alert_type      = Column(Text, nullable=False)
+    severity        = Column(Enum(AlertSeverity), default=AlertSeverity.INFO)
+    tag_name        = Column(Text, nullable=False)
+    value           = Column(Float, nullable=True)
+    threshold       = Column(Float, nullable=True)
+    z_score         = Column(Float, nullable=True)
+    description     = Column(Text, nullable=False)
+    acknowledged    = Column(Boolean, default=False)
+    acknowledged_by = Column(Text, nullable=True)
 
 
-# ── App Config (key-value store) ──────────────────────────────────────────────
+# ── App Config ────────────────────────────────────────────────────────────────
 class AppConfig(Base):
     __tablename__ = "app_config"
 
-    id = Column(Integer, primary_key=True, index=True)
-    key = Column(String(128), unique=True, nullable=False, index=True)
-    value = Column(JSON, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id         = Column(Integer, primary_key=True, index=True)
+    key        = Column(Text, unique=True, nullable=False, index=True)
+    value      = Column(JSON, nullable=True)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

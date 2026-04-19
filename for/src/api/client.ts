@@ -4,7 +4,7 @@
  */
 import axios from 'axios'
 
-const BASE_URL = 'http://localhost:8000'
+export const BASE_URL = 'http://localhost:8000'
 
 export const api = axios.create({ baseURL: BASE_URL })
 
@@ -30,7 +30,7 @@ api.interceptors.response.use(
 // ── Typed request helpers ─────────────────────────────────────────────────────
 export const authApi = {
   login: (username: string, password: string) => {
-    const fd = new FormData()
+    const fd = new URLSearchParams() 
     fd.append('username', username)
     fd.append('password', password)
     return api.post<{ access_token: string; token_type: string }>('/token', fd)
@@ -84,6 +84,7 @@ export interface Prediction {
   is_outlier: boolean
   outlier_score: number
   timestamp: string
+  tags?: Record<string, number>  
 }
 
 export interface OptimizeResult {
@@ -110,6 +111,7 @@ export interface Alert {
   z_score: number | null
   description: string
   acknowledged: boolean
+  acknowledged_by: string | null   // ← add this
 }
 
 export interface Company {

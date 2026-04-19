@@ -30,19 +30,27 @@ logger = logging.getLogger(__name__)
 
 
 # ── DB initialisation helpers ──────────────────────────────────────────────────
-def init_db():
-    """Create tables and attempt TimescaleDB hypertable conversion."""
-    models.Base.metadata.create_all(bind=engine)
-    try:
-        with engine.connect() as conn:
-            conn.execute(text(
-                "SELECT create_hypertable('predictions', 'timestamp', "
-                "if_not_exists => TRUE, migrate_data => TRUE);"
-            ))
-            conn.commit()
+import time
+
+def init_db(retries: int = 10, delay: float = 3.0):
+    """Create tables and attempt TimescaleDB hypertable conversion, with retry."""
+    for attempt in range(1, retries + 1):
+        try:
+            models.Base.metadata.create_all(bind=engine)
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "SELECT create_hypertable('predictions', 'timestamp', "
+                    "if_not_exists => TRUE, migrate_data => TRUE);"
+                ))
+                conn.commit()
             logger.info("✓ TimescaleDB hypertable ready")
-    except Exception as e:
-        logger.warning(f"TimescaleDB hypertable skipped (non-fatal): {e}")
+            return  # success — exit
+        except Exception as e:
+            if attempt == retries:
+                logger.error(f"✗ Database init failed after {retries} attempts: {e}")
+                raise
+            logger.warning(f"DB not ready (attempt {attempt}/{retries}), retrying in {delay}s…")
+            time.sleep(delay)
 
 
 def seed_db():

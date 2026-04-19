@@ -16,6 +16,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    networks:
+      app-network:        # ✅ ADD THIS  
 
   backend:
     build:
@@ -38,7 +40,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
+    networks:
+      app-network:        # ✅ ADD THIS
   for:
     build:
       context: ./for
@@ -54,3 +57,5 @@ services:
 
 volumes:
   postgres_data:
+networks:
+  app-network:        # ✅ ADD THIS

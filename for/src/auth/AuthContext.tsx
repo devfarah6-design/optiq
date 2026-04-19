@@ -17,10 +17,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const token = localStorage.getItem('optiq_token')
     if (!token) { setLoading(false); return }
-    authApi.me()
-      .then(r => setUser(r.data))
-      .catch(() => localStorage.removeItem('optiq_token'))
-      .finally(() => setLoading(false))
+  
+    const fetchUser = async () => {
+      try {
+        const r = await authApi.me()
+        setUser(r.data)
+      } catch {
+        localStorage.removeItem('optiq_token')
+      } finally {
+        setLoading(false)
+      }
+    }
+  
+    fetchUser()
   }, [])
 
   const login = async (username: string, password: string) => {

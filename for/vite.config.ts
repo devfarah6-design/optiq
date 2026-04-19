@@ -13,7 +13,7 @@ export default defineConfig({
   },
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   build: {
-    outDir: 'dist',
+    outDir: 'dist',  // This is the default, but explicitly set it
     rollupOptions: {
       output: {
         manualChunks: (id) => {

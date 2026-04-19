@@ -1,0 +1,6 @@
+algorithm,seed,steam_kg_h,reflux_temp_C,bottom_temp_C,nominal_energy,best_energy,nominal_purity,best_purity,energy_savings_pct,purity_improvement_pct,runtime_s,n_evaluations,evals_per_second,pareto_solutions,hypervolume,convergence_speed_iters
+NSGA-II,42,2536.4,77.73,98.85,1.024,0.8258,98.5,98.5,19.35,0.0,72.82,2000,27.5,50,0.0,-1
+PSO (MOPSO),42,2532.6,68.96,98.65,1.024,0.826,98.5,98.5,19.33,0.0,149.43,3030,20.3,1436,0.0,1
+"Genetic Algorithm (w_e=0.6, w_p=0.4)",42,2529.8,77.73,99.97,1.024,0.8258,98.5,98.5,19.35,0.0,169.59,5100,30.1,1,0.0,26
+Differential Evolution (best1bin),42,2530.0,77.52,99.11,1.024,0.8258,98.5,98.5,19.35,0.0,39.02,1174,30.1,1,0.0,-1
+"Bayesian Opt (TPE, 150 trials)",42,2537.0,77.56,97.9,1.024,0.8258,98.5,98.5,19.35,0.0,6.27,150,23.9,1,0.0,2

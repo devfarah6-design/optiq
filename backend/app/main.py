@@ -33,22 +33,40 @@ logger = logging.getLogger(__name__)
 import time
 
 def init_db(retries: int = 10, delay: float = 3.0):
-    """Create tables and attempt TimescaleDB hypertable conversion, with retry."""
+    """Create tables safely without TimescaleDB dependency."""
+
     for attempt in range(1, retries + 1):
         try:
+            # 1. Create normal PostgreSQL tables
             models.Base.metadata.create_all(bind=engine)
-            with engine.connect() as conn:
-                conn.execute(text(
-                    "SELECT create_hypertable('predictions', 'timestamp', "
-                    "if_not_exists => TRUE, migrate_data => TRUE);"
-                ))
-                conn.commit()
-            logger.info("✓ TimescaleDB hypertable ready")
-            return  # success — exit
+
+            # 2. OPTIONAL: try TimescaleDB, but DO NOT crash if not available
+            try:
+                with engine.connect() as conn:
+                    conn.execute(text("""
+                        SELECT create_hypertable(
+                            'predictions',
+                            'timestamp',
+                            if_not_exists => TRUE,
+                            migrate_data => TRUE
+                        );
+                    """))
+                    conn.commit()
+
+                logger.info("✓ TimescaleDB hypertable enabled")
+
+            except Exception:
+                # IMPORTANT: ignore if extension doesn't exist
+                logger.warning("TimescaleDB not available — using normal PostgreSQL table")
+
+            logger.info("✓ Database initialized successfully")
+            return
+
         except Exception as e:
             if attempt == retries:
                 logger.error(f"✗ Database init failed after {retries} attempts: {e}")
                 raise
+
             logger.warning(f"DB not ready (attempt {attempt}/{retries}), retrying in {delay}s…")
             time.sleep(delay)
 
@@ -112,6 +130,7 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "http://for:80",
+            "https://optiq-dss.netlify.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],

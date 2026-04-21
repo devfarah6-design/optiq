@@ -130,7 +130,10 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "http://for:80",
-            "https://optiq-dss.netlify.app",
+          "http://localhost:5173",
+          "https://optiq-dss.netlify.app",   # ← add this after you get your URL
+          "https://*.netlify.app",   
+          "https://optiq0optim.netlify.app"# ← allows all netlify preview URLs
     ],
     allow_credentials=True,
     allow_methods=["*"],

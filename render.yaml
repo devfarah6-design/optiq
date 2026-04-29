@@ -1,0 +1,27 @@
+  services:
+    - type: web
+      name: optiq_mast
+      runtime: python
+      buildCommand: pip install -r backend/requirements.txt
+      startCommand: cd backend && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+      envVars:
+        - key: DATABASE_URL
+          sync: false
+        - key: SECRET_KEY
+          sync: false
+        - key: ADMIN_USERNAME
+          value: admin
+        - key: ADMIN_PASSWORD
+          sync: false
+        - key: MODEL_PATH
+          value: models/best_xgb_model.pkl
+        - key: LOG_LEVEL
+          value: INFO
+        - key: STUCK_SENSOR_THRESHOLD
+          value: "0.01"
+        - key: OUTLIER_Z_SCORE_THRESHOLD
+          value: "3.5"
+        - key: INGESTION_INTERVAL_SECONDS
+          value: "10"
+        - key: MAX_HISTORY_SIZE
+          value: "200"

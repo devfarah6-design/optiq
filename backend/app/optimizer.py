@@ -140,16 +140,28 @@ def _build_readings(setpoints: np.ndarray, base: list) -> list:
 def _validate_current_state(current_state: list) -> list:
     """
     Ensure current_state contains realistic setpoint values.
-    If the frontend sends mock values like [65, 72, 58] that are outside
-    the setpoint bounds, replace them with nominals.
+    Also log if values seem like PVs (off by significant amount)
     """
     validated = []
     for i, (val, sp) in enumerate(zip(current_state, SETPOINT_DEFS)):
-        if sp['min'] <= val <= sp['max']:
+        # Check if value is suspiciously different from typical setpoint range
+        if val < sp['min'] * 0.9 or val > sp['max'] * 1.1:
+            logger.error(
+                f"current_state[{i}]={val} is FAR outside bounds "
+                f"[{sp['min']}, {sp['max']}] for {sp['sp_tag']}. "
+                f"Are you sending a PV value instead of SP?"
+            )
+            # Don't auto-correct drastically - raise error for debugging
+            raise ValueError(
+                f"Setpoint {sp['sp_tag']} value {val} is outside expected range. "
+                f"Expected between {sp['min']} and {sp['max']}. "
+                f"Did you accidentally send a PV value instead of SP?"
+            )
+        elif sp['min'] <= val <= sp['max']:
             validated.append(float(val))
         else:
             logger.warning(
-                f"current_state[{i}]={val} is outside bounds "
+                f"current_state[{i}]={val} outside bounds "
                 f"[{sp['min']}, {sp['max']}] for {sp['sp_tag']} — "
                 f"using nominal {sp['nominal']}"
             )

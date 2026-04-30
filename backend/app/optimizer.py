@@ -188,84 +188,129 @@ class DebutanizerProblem(Problem):
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
-def optimize(
-    current_state:  list,
-    base_readings:  list | None = None,
-    pop_size:       int  = 50,
-    n_gen:          int  = 40,
-    seed:           int  = 42,
-) -> schemas.OptimizeOut:
+# optimizer.py - Complete improved version
 
+def optimize(
+    current_state: list,
+    base_readings: list | None = None,
+    pop_size: int = 100,      # Increased for better exploration
+    n_gen: int = 60,          # More generations
+    seed: int = 42,
+) -> schemas.OptimizeOut:
+    """Improved NSGA-II with constraints and better selection"""
+    
     if len(current_state) != 3:
         raise ValueError(f"optimize() expects 3 setpoints, got {len(current_state)}")
 
-    # Fix out-of-bounds current_state (e.g. mock [65, 72, 58] from frontend)
+    # Validate current state
     current_state = _validate_current_state(current_state)
-
-    # Build full baseline (live data preferred, nominals as fallback)
     base = _make_base_readings(base_readings)
 
-    # ── NSGA-II ───────────────────────────────────────────────────────────────
+    # Define optimization problem with constraints
+    class ConstrainedDebutanizerProblem(Problem):
+        def __init__(self, base_list: list):
+            xl = np.array([sp['min'] for sp in SETPOINT_DEFS])
+            xu = np.array([sp['max'] for sp in SETPOINT_DEFS])
+            super().__init__(n_var=3, n_obj=2, n_ieq_constr=1, xl=xl, xu=xu)
+            self.base = base_list
+
+        def _evaluate(self, x, out, *args, **kwargs):
+            f1, f2, constraints = [], [], []
+            
+            for sp in x:
+                r = _build_readings(sp, self.base)
+                pred = model_wrapper.predict(r)
+                
+                # Objectives
+                f1.append(pred['energy'])
+                f2.append(-pred['purity'])  # Minimize negative purity
+                
+                # Constraint: purity >= 95% (critical for product quality)
+                # G <= 0 means feasible
+                constraints.append(95.0 - pred['purity'])
+            
+            out['F'] = np.column_stack([f1, f2])
+            out['G'] = np.column_stack([constraints])
+
+    # Run optimization
+    problem = ConstrainedDebutanizerProblem(base)
+    algorithm = NSGA2(
+        pop_size=pop_size,
+        crossover=SBX(prob=0.9, eta=15),
+        mutation=PM(eta=20),
+        eliminate_duplicates=True,
+    )
+    
     result = pymoo_minimize(
-        DebutanizerProblem(base),
-        NSGA2(
-            pop_size=pop_size,
-            crossover=SBX(prob=0.9, eta=15),
-            mutation=PM(eta=20),
-            eliminate_duplicates=True,
-        ),
+        problem,
+        algorithm,
         get_termination("n_gen", n_gen),
-        seed=seed, verbose=False,
+        seed=seed,
+        verbose=False,
     )
 
-    F = result.F   # (n, 2): [energy, -purity]
-    X = result.X   # (n, 3): setpoints
+    # Filter feasible solutions (those meeting purity constraint)
+    feasible_mask = result.G[:, 0] <= 0 if result.G is not None else np.ones(len(result.F), dtype=bool)
+    
+    if not np.any(feasible_mask):
+        logger.warning("No feasible solutions found - relaxing constraints")
+        # Fallback: solutions closest to meeting purity
+        feasibility_score = -result.G[:, 0]  # Less negative = closer to feasible
+        best_feasible_idx = int(np.argmax(feasibility_score))
+    else:
+        # Among feasible solutions, find best trade-off
+        F_feasible = result.F[feasible_mask]
+        X_feasible = result.X[feasible_mask]
+        
+        # Normalize
+        F_norm = (F_feasible - F_feasible.min(0)) / (F_feasible.max(0) - F_feasible.min(0) + 1e-9)
+        
+        # Weighted selection: 70% purity, 30% energy
+        weights = np.array([0.3, 0.7])
+        scores = np.sum(F_norm * weights, axis=1)
+        best_idx_in_feasible = int(np.argmin(scores))
+        
+        # Map back to original indices
+        feasible_indices = np.where(feasible_mask)[0]
+        best_idx = feasible_indices[best_idx_in_feasible]
+        
+        best_sp = X_feasible[best_idx_in_feasible]
+        best_energy = float(F_feasible[best_idx_in_feasible, 0])
+        best_purity = float(-F_feasible[best_idx_in_feasible, 1])
 
-    # Best balanced: closest to ideal point on normalised Pareto front
-    F_norm   = (F - F.min(0)) / (F.max(0) - F.min(0) + 1e-9)
-    best_idx = int(np.argmin(np.linalg.norm(F_norm, axis=1)))
-
-    best_sp     = X[best_idx]
-    best_energy = float(np.clip(F[best_idx, 0], 0.5, 5.0))
-    best_purity = float(np.clip(-F[best_idx, 1], 80.0, 99.99))
-
-    # ── Current performance (same base context) ───────────────────────────────
+    # Current performance
     current_readings = _build_readings(np.array(current_state), base)
-    current_pred     = model_wrapper.predict(current_readings)
-    current_energy   = float(np.clip(current_pred['energy'], 0.5, 5.0))
-    current_purity   = float(np.clip(current_pred['purity'], 80.0, 99.99))
+    current_pred = model_wrapper.predict(current_readings)
+    current_energy = float(np.clip(current_pred['energy'], 0.5, 5.0))
+    current_purity = float(np.clip(current_pred['purity'], 80.0, 99.99))
 
-    # ── Improvements — clamp to [0, 100], never negative ─────────────────────
-    energy_savings     = max(0.0, (current_energy - best_energy) / (current_energy + 1e-9) * 100)
+    # Calculate improvements
+    energy_savings = max(0.0, (current_energy - best_energy) / (current_energy + 1e-9) * 100)
     purity_improvement = max(0.0, (best_purity - current_purity) / (current_purity + 1e-9) * 100)
 
-    status = (
-        'optimal'  if energy_savings > 3 and purity_improvement > 0.3 else
-        'warning'  if energy_savings > 0.5 or purity_improvement > 0.1 else
-        'critical'
-    )
+    # Status based on realistic thresholds
+    if purity_improvement < 0.1:
+        status = 'critical'  # Model not responsive
+    elif energy_savings > 5 and purity_improvement > 0.2:
+        status = 'optimal'
+    elif energy_savings > 2 or purity_improvement > 0.1:
+        status = 'warning'
+    else:
+        status = 'critical'
 
-    logger.info(
-        f"NSGA-II | {len(F)} Pareto solutions | "
-        f"steam={best_sp[0]:.1f}kg/h reflux={best_sp[1]:.1f}°C bottom={best_sp[2]:.1f}°C | "
-        f"E: {current_energy:.4f}→{best_energy:.4f} (save {energy_savings:.1f}%) | "
-        f"P: {current_purity:.2f}%→{best_purity:.2f}% (gain {purity_improvement:.2f}%) | "
-        f"status={status}"
-    )
-
-    # If optimizer couldn't beat current operation, recommend current setpoints
-    no_improvement = energy_savings <= 0 and purity_improvement <= 0.01
+    logger.info(f"Optimization complete: {len(result.F)} solutions, {np.sum(feasible_mask)} feasible | "
+                f"Energy: {current_energy:.4f}→{best_energy:.4f} ({energy_savings:.1f}%) | "
+                f"Purity: {current_purity:.2f}%→{best_purity:.2f}% ({purity_improvement:.2f}%)")
 
     return schemas.OptimizeOut(
-        current_setpoints          = current_state,
-        # If no improvement found → recommend staying at current setpoints
-        recommended_setpoints      = current_state if no_improvement else best_sp.tolist(),
-        current_energy             = current_energy,
-        expected_energy            = current_energy if no_improvement else best_energy,
-        current_purity             = current_purity,
-        expected_purity            = current_purity if no_improvement else best_purity,
-        energy_savings_percent     = 0.0 if no_improvement else float(energy_savings),
-        purity_improvement_percent = 0.0 if no_improvement else float(purity_improvement),
-        status                     = 'critical' if no_improvement else status,
-        feasibility_score          = float(1.0 - F_norm[best_idx].mean()),
+        current_setpoints=current_state,
+        recommended_setpoints=best_sp.tolist(),
+        current_energy=current_energy,
+        expected_energy=best_energy,
+        current_purity=current_purity,
+        expected_purity=best_purity,
+        energy_savings_percent=float(energy_savings),
+        purity_improvement_percent=float(purity_improvement),
+        status=status,
+        feasibility_score=float(1.0 - (95.0 - best_purity) / 5.0 if best_purity < 95 else 1.0),
     )

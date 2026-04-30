@@ -366,24 +366,58 @@ const Dashboard: React.FC = () => {
                 <div className="text-xs text-muted">NSGA-II multi-objective optimisation</div>
               </div>
               {recommendation ? (
-                <div style={{ flex: 1 }}>
-                  <div className={`badge badge-${recommendation.status === 'optimal' ? 'success' : recommendation.status === 'warning' ? 'warning' : 'error'} mb-3`}>
-                    {recommendation.status.toUpperCase()}
-                  </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
-                    <Metric label="Energy savings"  value={`-${recommendation.energy_savings_percent.toFixed(1)}%`}   positive />
-                    <Metric label="Purity gain"     value={`+${recommendation.purity_improvement_percent.toFixed(2)}%`} positive />
-                    <Metric label="Exp. energy"     value={recommendation.expected_energy.toFixed(4)} />
-                    <Metric label="Exp. purity"     value={`${recommendation.expected_purity.toFixed(2)}%`} />
-                  </div>
-                  <div className="text-xs text-muted mb-1">Recommended setpoints</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--primary)', lineHeight: 1.8 }}>
-                    Steam: {recommendation.recommended_setpoints[0]?.toFixed(1)} kg/h<br/>
-                    Reflux: {recommendation.recommended_setpoints[1]?.toFixed(1)} °C<br/>
-                    Bottom: {recommendation.recommended_setpoints[2]?.toFixed(1)} °C
-                  </div>
-                </div>
-              ) : (
+  <div style={{ flex: 1 }}>
+
+    {/* Status badge */}
+    <div className={`badge badge-${
+      recommendation.status === 'optimal'  ? 'success' :
+      recommendation.status === 'warning'  ? 'warning' : 'error'
+    } mb-3`}>
+      {recommendation.status.toUpperCase()}
+    </div>
+
+    {/* No-improvement message */}
+    {recommendation.energy_savings_percent <= 0 && (
+      <div style={{
+        background: 'rgba(0,217,255,0.06)',
+        border: '1px solid rgba(0,217,255,0.15)',
+        borderRadius: 'var(--r-md)',
+        padding: '0.6rem 0.875rem',
+        fontSize: '0.8rem',
+        color: 'var(--text-mid)',
+        marginBottom: '0.75rem',
+      }}>
+        Current operation is near-optimal for this model. No improvement found.
+      </div>
+    )}
+
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
+      <Metric
+        label="Energy savings"
+        value={recommendation.energy_savings_percent > 0
+          ? `-${recommendation.energy_savings_percent.toFixed(1)}%`
+          : 'Near optimal'}
+        positive={recommendation.energy_savings_percent > 0}
+      />
+      <Metric
+        label="Purity gain"
+        value={recommendation.purity_improvement_percent > 0.01
+          ? `+${recommendation.purity_improvement_percent.toFixed(2)}%`
+          : 'Unchanged'}
+        positive={recommendation.purity_improvement_percent > 0.01}
+      />
+      <Metric label="Current energy" value={recommendation.current_energy.toFixed(4)} />
+      <Metric label="Best found"     value={recommendation.expected_energy.toFixed(4)} />
+    </div>
+
+    <div className="text-xs text-muted mb-1">Recommended setpoints</div>
+    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--primary)', lineHeight: 1.8 }}>
+      Steam:  {recommendation.recommended_setpoints[0]?.toFixed(1)} kg/h<br/>
+      Reflux: {recommendation.recommended_setpoints[1]?.toFixed(1)} °C<br/>
+      Bottom: {recommendation.recommended_setpoints[2]?.toFixed(1)} °C
+    </div>
+  </div>
+) : (
                 <div style={{ flex: 1, display: 'grid', placeItems: 'center', color: 'var(--text-low)', fontSize: '0.85rem', textAlign: 'center', padding: '1rem' }}>
                   Click below to compute<br/>optimal setpoints
                 </div>

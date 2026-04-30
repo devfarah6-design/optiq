@@ -241,15 +241,19 @@ def optimize(
         f"status={status}"
     )
 
+    # If optimizer couldn't beat current operation, recommend current setpoints
+    no_improvement = energy_savings <= 0 and purity_improvement <= 0.01
+
     return schemas.OptimizeOut(
         current_setpoints          = current_state,
-        recommended_setpoints      = best_sp.tolist(),
+        # If no improvement found → recommend staying at current setpoints
+        recommended_setpoints      = current_state if no_improvement else best_sp.tolist(),
         current_energy             = current_energy,
-        expected_energy            = best_energy,
+        expected_energy            = current_energy if no_improvement else best_energy,
         current_purity             = current_purity,
-        expected_purity            = best_purity,
-        energy_savings_percent     = float(energy_savings),
-        purity_improvement_percent = float(purity_improvement),
-        status                     = status,
+        expected_purity            = current_purity if no_improvement else best_purity,
+        energy_savings_percent     = 0.0 if no_improvement else float(energy_savings),
+        purity_improvement_percent = 0.0 if no_improvement else float(purity_improvement),
+        status                     = 'critical' if no_improvement else status,
         feasibility_score          = float(1.0 - F_norm[best_idx].mean()),
     )

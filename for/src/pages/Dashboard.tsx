@@ -92,7 +92,13 @@ const Dashboard: React.FC = () => {
   const fetchOptimization = async () => {
     setOptLoading(true)
     try {
-      const res = await predictApi.optimize([65.0, 72.0, 58.0])
+      const currentSetpoints = [
+        current?.tags?.['2FI422.PV']  ?? 3000.0,   // steam flow kg/h
+        current?.tags?.['2TI1_414.PV'] ?? 74.0,    // reflux temp °C  
+        current?.tags?.['2TIC403.PV']  ?? 94.0,    // bottom temp °C
+      ]
+      const res = await predictApi.optimize(currentSetpoints)
+    
       setRecommendation(res.data)
     } catch (e) { console.error('Optimize failed:', e) }
     finally { setOptLoading(false) }

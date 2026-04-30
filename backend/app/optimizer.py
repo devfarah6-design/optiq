@@ -288,15 +288,12 @@ def optimize(
     energy_savings = max(0.0, (current_energy - best_energy) / (current_energy + 1e-9) * 100)
     purity_improvement = max(0.0, (best_purity - current_purity) / (current_purity + 1e-9) * 100)
 
-    # Status based on realistic thresholds
-    if purity_improvement < 0.1:
-        status = 'critical'  # Model not responsive
-    elif energy_savings > 5 and purity_improvement > 0.2:
-        status = 'optimal'
-    elif energy_savings > 2 or purity_improvement > 0.1:
-        status = 'warning'
-    else:
-        status = 'critical'
+    # After computing energy_savings and purity_improvement with max(0.0, ...):
+    status = (
+        'optimal'  if energy_savings > 5  and purity_improvement > 0.3  else
+        'warning'  if energy_savings > 1  or  purity_improvement > 0.1  else
+        'critical'
+    )
 
     logger.info(f"Optimization complete: {len(result.F)} solutions, {np.sum(feasible_mask)} feasible | "
                 f"Energy: {current_energy:.4f}→{best_energy:.4f} ({energy_savings:.1f}%) | "

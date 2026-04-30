@@ -35,10 +35,16 @@ const Monitoring: React.FC = () => {
   }
 
   useEffect(() => {
-    const ws = new WebSocket('ws://localhost:8000/ws')
-    
-    ws.onopen = () => setWsStatus('connected')
-    ws.onclose = () => setWsStatus('disconnected')
+   // AFTER (fixed)
+const apiUrl = (import.meta as any).env?.VITE_API_URL as string | undefined
+const wsUrl  = apiUrl
+  ? apiUrl.replace(/^http/, 'ws') + '/ws'
+  : 'ws://localhost:8000/ws'
+
+const ws = new WebSocket(wsUrl)
+
+ws.onopen  = () => setWsStatus('connected')
+ws.onclose = () => { setWsStatus('disconnected'); }
     
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data)
@@ -85,28 +91,57 @@ const Monitoring: React.FC = () => {
   }
 
   const generateReport = () => {
-    const reportData = {
-      timestamp: new Date().toISOString(),
-      energy: currentData?.energy,
-      purity: currentData?.purity,
-      tags: tagStatuses.filter(t => selectedTags.includes(t.tag) || selectedTags.length === 0),
-      summary: {
-        critical: tagStatuses.filter(t => t.status === 'critical').length,
-        warning: tagStatuses.filter(t => t.status === 'warning').length,
-        normal: tagStatuses.filter(t => t.status === 'normal').length,
-      }
-    }
-    
-    // Create downloadable report
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `monitoring-report-${new Date().toISOString().slice(0,19)}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+    const now = new Date().toLocaleString()
+    const rows = tagStatuses.map(t => `
+      <tr style="background:${t.status==='critical'?'#FEE2E2':t.status==='warning'?'#FEF3C7':'transparent'}">
+        <td style="padding:6px 10px;font-family:monospace;font-size:12px">${t.tag}</td>
+        <td style="padding:6px 10px;font-size:12px;color:#555">${t.description}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600">${t.value.toFixed(3)} ${t.unit}</td>
+        <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#888">${t.nominal} ${t.unit}</td>
+        <td style="padding:6px 10px;text-align:right;font-size:11px;color:#888">${t.min} – ${t.max}</td>
+        <td style="padding:6px 10px;text-align:center">
+          <span style="background:${t.status==='critical'?'#FEE2E2':t.status==='warning'?'#FEF3C7':'#DCFCE7'};
+                       color:${t.status==='critical'?'#991B1B':t.status==='warning'?'#92400E':'#166534'};
+                       padding:2px 10px;border-radius:12px;font-size:11px;font-weight:700">
+            ${t.status.toUpperCase()}
+          </span>
+        </td>
+      </tr>`).join('')
+  
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+    <title>OPTIQ Monitoring Report</title>
+    <style>body{font-family:Arial,sans-serif;padding:24px;color:#111}
+    .header{background:#0D1B2A;color:white;padding:18px 24px;border-radius:8px;margin-bottom:20px}
+    h1{margin:0;font-size:20px;color:#00D9FF} p{margin:4px 0 0;color:#7A9BB5;font-size:13px}
+    .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+    .kpi{background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px}
+    .kl{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#64748b}
+    .kv{font-size:22px;font-weight:700;font-family:monospace;margin:3px 0}
+    table{width:100%;border-collapse:collapse}
+    th{background:#0D1B2A;color:white;padding:8px 10px;font-size:12px;text-align:left}
+    tr:nth-child(even){background:#f9fafb}
+    .footer{margin-top:24px;text-align:center;font-size:11px;color:#94a3b8;border-top:1px solid #e2e8f0;padding-top:10px}
+    @media print{body{padding:0}}</style></head><body>
+    <div class="header">
+      <h1>OPTIQ DSS — Process Monitoring Report</h1>
+      <p>DC4 Butane Debutanizer · ${now} · ${user?.username}</p>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="kl">Energy</div><div class="kv">${currentData?.energy.toFixed(4) ?? '—'}</div><div style="font-size:11px;color:#94a3b8">kg steam/kg butane</div></div>
+      <div class="kpi"><div class="kl">Purity</div><div class="kv">${currentData?.purity.toFixed(2) ?? '—'}%</div><div style="font-size:11px;color:#94a3b8">Butane product</div></div>
+      <div class="kpi"><div class="kl">Critical</div><div class="kv" style="color:#dc2626">${tagStatuses.filter(t=>t.status==='critical').length}</div></div>
+      <div class="kpi"><div class="kl">Warning</div><div class="kv" style="color:#d97706">${tagStatuses.filter(t=>t.status==='warning').length}</div></div>
+    </div>
+    <table>
+      <tr><th>Tag</th><th>Description</th><th>Current</th><th>Nominal</th><th>Range</th><th>Status</th></tr>
+      ${rows}
+    </table>
+    <div class="footer">OPTIQ DSS · DC4 Butane Debutanizer · Made in Algeria · 2026</div>
+    </body></html>`
+  
+    const w = window.open('', '_blank')
+    if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400) }
   }
-
   const printReport = () => {
     window.print()
   }

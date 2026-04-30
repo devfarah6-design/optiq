@@ -284,95 +284,110 @@ const Admin: React.FC = () => {
       </div>
 
       {/* ── Company modal ─────────────────────────────────────────────────── */}
-      {showModal && (
-        <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setShowModal(false) }}>
-          <div className="modal" style={{ maxWidth: 520 }}>
-            <div className="flex justify-between items-center mb-5">
-              <div className="font-display font-bold text-lg">{editTarget ? 'Edit Company' : 'Add Company'}</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
-            </div>
+     {/* ── Company modal ─────────────────────────────────────────────────── */}
+{showModal && (
+  <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setShowModal(false) }}>
+    <div className="modal" style={{ 
+      maxWidth: 520, 
+      maxHeight: '90vh', 
+      display: 'flex', 
+      flexDirection: 'column',
+      overflow: 'hidden'
+    }}>
+      <div className="flex justify-between items-center mb-5" style={{ flexShrink: 0 }}>
+        <div className="font-display font-bold text-lg">{editTarget ? 'Edit Company' : 'Add Company'}</div>
+        <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
+      </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
-              <ModalField label="Company name *">
-                <input className="input" placeholder="e.g. Sonatrach LNG" value={form.name} onChange={f('name')} />
-              </ModalField>
+      {/* Scrollable content area */}
+      <div style={{ 
+        flex: 1, 
+        overflowY: 'auto', 
+        paddingRight: '4px',
+        marginRight: '-4px'
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
+          <ModalField label="Company name *">
+            <input className="input" placeholder="e.g. Sonatrach LNG" value={form.name} onChange={f('name')} />
+          </ModalField>
 
-              <ModalField label="Slug (URL-safe) *">
-                <input className="input" placeholder="e.g. sonatrach-lng"
-                       value={form.slug} onChange={f('slug')}
-                       disabled={!!editTarget} style={{ opacity: editTarget ? 0.6 : 1 }} />
-              </ModalField>
+          <ModalField label="Slug (URL-safe) *">
+            <input className="input" placeholder="e.g. sonatrach-lng"
+                   value={form.slug} onChange={f('slug')}
+                   disabled={!!editTarget} style={{ opacity: editTarget ? 0.6 : 1 }} />
+          </ModalField>
 
-              {/* Sector — auto-updates palette */}
-              <ModalField label="Sector">
-                <select className="input" value={form.sector}
-                        onChange={e => onSectorChange(e.target.value)}>
-                  {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <div className="text-xs text-lo mt-1">Changing sector applies a matching colour palette automatically.</div>
-              </ModalField>
+          {/* Sector — auto-updates palette */}
+          <ModalField label="Sector">
+            <select className="input" value={form.sector}
+                    onChange={e => onSectorChange(e.target.value)}>
+              {SECTORS.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <div className="text-xs text-lo mt-1">Changing sector applies a matching colour palette automatically.</div>
+          </ModalField>
 
-              {/* Logo upload */}
-              <ModalField label="Logo">
-                <div className="flex gap-2 items-center">
-                  {form.logo_url && (
-                    <img src={form.logo_url} alt="logo preview"
-                         style={{ width: 44, height: 44, objectFit: 'contain',
-                                  background: form.background_color, borderRadius: 6, border: '1px solid var(--border)', flexShrink: 0 }} />
-                  )}
-                  <div style={{ flex: 1 }}>
-                    <button className="btn btn-ghost btn-sm w-full" onClick={() => logoInputRef.current?.click()}>
-                      {form.logo_url ? '⬆ Replace logo' : '⬆ Upload logo from computer'}
-                    </button>
-                    <input ref={logoInputRef} type="file" accept="image/*"
-                           style={{ display: 'none' }} onChange={handleLogoUpload} />
-                    <div className="text-xs text-lo mt-1">PNG / SVG / JPG — max 500 KB</div>
-                  </div>
-                  {form.logo_url && (
-                    <button className="btn btn-danger btn-sm" onClick={() => setForm(p => ({ ...p, logo_url: '' }))}>✕</button>
-                  )}
-                </div>
-              </ModalField>
-
-              {/* Colour pickers */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.75rem' }}>
-                <ColourField label="Primary"    value={form.primary_color}    onChange={v => setForm(p => ({ ...p, primary_color: v }))} />
-                <ColourField label="Accent"     value={form.accent_color}     onChange={v => setForm(p => ({ ...p, accent_color: v }))} />
-                <ColourField label="Background" value={form.background_color} onChange={v => setForm(p => ({ ...p, background_color: v }))} />
+          {/* Logo upload */}
+          <ModalField label="Logo">
+            <div className="flex gap-2 items-center">
+              {form.logo_url && (
+                <img src={form.logo_url} alt="logo preview"
+                     style={{ width: 44, height: 44, objectFit: 'contain',
+                              background: form.background_color, borderRadius: 6, border: '1px solid var(--border)', flexShrink: 0 }} />
+              )}
+              <div style={{ flex: 1 }}>
+                <button className="btn btn-ghost btn-sm w-full" onClick={() => logoInputRef.current?.click()}>
+                  {form.logo_url ? '⬆ Replace logo' : '⬆ Upload logo from computer'}
+                </button>
+                <input ref={logoInputRef} type="file" accept="image/*"
+                       style={{ display: 'none' }} onChange={handleLogoUpload} />
+                <div className="text-xs text-lo mt-1">PNG / SVG / JPG — max 500 KB</div>
               </div>
-
-              {/* Live preview */}
-              <div style={{
-                borderRadius: 'var(--r-md)', padding: '0.875rem 1rem',
-                background: form.background_color,
-                border: `1px solid ${form.primary_color}55`,
-                display: 'flex', alignItems: 'center', gap: '0.875rem',
-              }}>
-                {form.logo_url && (
-                  <img src={form.logo_url} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} />
-                )}
-                <div>
-                  <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: form.primary_color }}>
-                    {form.name || 'Company Name'}
-                  </div>
-                  <div style={{ fontSize: '0.65rem', letterSpacing: '0.12em', color: form.accent_color, opacity: 0.8 }}>
-                    {form.sector} · POWERED BY OPTIQ
-                  </div>
-                </div>
-              </div>
+              {form.logo_url && (
+                <button className="btn btn-danger btn-sm" onClick={() => setForm(p => ({ ...p, logo_url: '' }))}>✕</button>
+              )}
             </div>
+          </ModalField>
 
-            <div className="flex gap-3 mt-6">
-              <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn btn-primary" style={{ flex: 2 }}
-                      onClick={handleSave} disabled={saving || !form.name || !form.slug}>
-                {saving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : editTarget ? 'Save Changes' : 'Create Company'}
-              </button>
+          {/* Colour pickers */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+            <ColourField label="Primary"    value={form.primary_color}    onChange={v => setForm(p => ({ ...p, primary_color: v }))} />
+            <ColourField label="Accent"     value={form.accent_color}     onChange={v => setForm(p => ({ ...p, accent_color: v }))} />
+            <ColourField label="Background" value={form.background_color} onChange={v => setForm(p => ({ ...p, background_color: v }))} />
+          </div>
+
+          {/* Live preview */}
+          <div style={{
+            borderRadius: 'var(--r-md)', padding: '0.875rem 1rem',
+            background: form.background_color,
+            border: `1px solid ${form.primary_color}55`,
+            display: 'flex', alignItems: 'center', gap: '0.875rem',
+          }}>
+            {form.logo_url && (
+              <img src={form.logo_url} alt="" style={{ width: 32, height: 32, objectFit: 'contain' }} />
+            )}
+            <div>
+              <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: '1rem', color: form.primary_color }}>
+                {form.name || 'Company Name'}
+              </div>
+              <div style={{ fontSize: '0.65rem', letterSpacing: '0.12em', color: form.accent_color, opacity: 0.8 }}>
+                {form.sector} · POWERED BY OPTIQ
+              </div>
             </div>
           </div>
         </div>
-      )}
+      </div>
 
+      {/* Fixed footer with buttons */}
+      <div className="flex gap-3 mt-6" style={{ flexShrink: 0, paddingTop: '1rem', borderTop: '1px solid var(--border)' }}>
+        <button className="btn btn-ghost" style={{ flex: 1 }} onClick={() => setShowModal(false)}>Cancel</button>
+        <button className="btn btn-primary" style={{ flex: 2 }}
+                onClick={handleSave} disabled={saving || !form.name || !form.slug}>
+          {saving ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Saving…</> : editTarget ? 'Save Changes' : 'Create Company'}
+        </button>
+      </div>
+    </div>
+  </div>
+)}
       {/* ── Add User modal ────────────────────────────────────────────────── */}
       {showUserModal && (
         <div className="modal-backdrop" onClick={e => { if (e.target === e.currentTarget) setShowUserModal(false) }}>

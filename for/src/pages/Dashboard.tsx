@@ -412,9 +412,10 @@ const Dashboard: React.FC = () => {
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '0.75rem' }}>
       <Metric
         label="Energy savings"
-        value={recommendation.energy_savings_percent > 0
-          ? `-${recommendation.energy_savings_percent.toFixed(1)}%`
-          : 'Near optimal'}
+       
+     value={recommendation.energy_savings_percent > 0
+  ? `${recommendation.energy_savings_percent.toFixed(1)}%`    // ← remove the -
+  : 'Near optimal'}
         positive={recommendation.energy_savings_percent > 0}
       />
       <Metric

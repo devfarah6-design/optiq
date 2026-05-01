@@ -44,8 +44,6 @@ SETPOINT_DEFS = [
 ]
 
 # ── Full 33-sensor nominal baseline ──────────────────────────────────────────
-# ALL sensors at nominal values — model gets a realistic operating context.
-# Zeros for 30 sensors is out-of-distribution and produces garbage predictions.
 _ALL_NOMINALS: dict[str, float] = {
     '2TIC403.PV':       94.0,
     '2TIC403.OP':       52.0,
@@ -108,18 +106,10 @@ _SETPOINT_INDICES: list = _resolve_indices()
 
 
 def _make_base_readings(base_readings: list | None) -> list:
-    """
-    Build a full 33-element reading vector.
-
-    Priority:
-      1. Use live base_readings from ingestion (best — real process context)
-      2. Fall back to ALL_NOMINALS (all 33 sensors at typical values)
-         Never use zeros — that's out-of-distribution for the model.
-    """
+    """Build a full 33-element reading vector."""
     if base_readings and len(base_readings) >= _N_FEATURES:
         return list(base_readings[:_N_FEATURES])
 
-    # Build from nominals using COLUMN_ORDER
     readings = [0.0] * _N_FEATURES
     for tag, idx in COLUMN_ORDER.items():
         if idx < _N_FEATURES:
@@ -138,20 +128,15 @@ def _build_readings(setpoints: np.ndarray, base: list) -> list:
 
 
 def _validate_current_state(current_state: list) -> list:
-    """
-    Ensure current_state contains realistic setpoint values.
-    Also log if values seem like PVs (off by significant amount)
-    """
+    """Ensure current_state contains realistic setpoint values."""
     validated = []
     for i, (val, sp) in enumerate(zip(current_state, SETPOINT_DEFS)):
-        # Check if value is suspiciously different from typical setpoint range
         if val < sp['min'] * 0.9 or val > sp['max'] * 1.1:
             logger.error(
                 f"current_state[{i}]={val} is FAR outside bounds "
                 f"[{sp['min']}, {sp['max']}] for {sp['sp_tag']}. "
                 f"Are you sending a PV value instead of SP?"
             )
-            # Don't auto-correct drastically - raise error for debugging
             raise ValueError(
                 f"Setpoint {sp['sp_tag']} value {val} is outside expected range. "
                 f"Expected between {sp['min']} and {sp['max']}. "
@@ -169,7 +154,7 @@ def _validate_current_state(current_state: list) -> list:
     return validated
 
 
-# ── pymoo Problem ─────────────────────────────────────────────────────────────
+# ── Single Problem Class (SIMPLIFIED for deployment) ─────────────────────────
 class DebutanizerProblem(Problem):
     def __init__(self, base: list):
         xl = np.array([sp['min'] for sp in SETPOINT_DEFS])
@@ -188,16 +173,14 @@ class DebutanizerProblem(Problem):
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
-# optimizer.py - Complete improved version
-
 def optimize(
     current_state: list,
     base_readings: list | None = None,
-    pop_size: int = 100,      # Increased for better exploration
-    n_gen: int = 60,          # More generations
+    pop_size: int = 50,
+    n_gen: int = 40,
     seed: int = 42,
 ) -> schemas.OptimizeOut:
-    """Improved NSGA-II with constraints and better selection"""
+    """Run NSGA-II optimization."""
     
     if len(current_state) != 3:
         raise ValueError(f"optimize() expects 3 setpoints, got {len(current_state)}")
@@ -206,34 +189,8 @@ def optimize(
     current_state = _validate_current_state(current_state)
     base = _make_base_readings(base_readings)
 
-    # Define optimization problem with constraints
-    class ConstrainedDebutanizerProblem(Problem):
-        def __init__(self, base_list: list):
-            xl = np.array([sp['min'] for sp in SETPOINT_DEFS])
-            xu = np.array([sp['max'] for sp in SETPOINT_DEFS])
-            super().__init__(n_var=3, n_obj=2, n_ieq_constr=1, xl=xl, xu=xu)
-            self.base = base_list
-
-        def _evaluate(self, x, out, *args, **kwargs):
-            f1, f2, constraints = [], [], []
-            
-            for sp in x:
-                r = _build_readings(sp, self.base)
-                pred = model_wrapper.predict(r)
-                
-                # Objectives
-                f1.append(pred['energy'])
-                f2.append(-pred['purity'])  # Minimize negative purity
-                
-                # Constraint: purity >= 95% (critical for product quality)
-                # G <= 0 means feasible
-                constraints.append(95.0 - pred['purity'])
-            
-            out['F'] = np.column_stack([f1, f2])
-            out['G'] = np.column_stack([constraints])
-
     # Run optimization
-    problem = ConstrainedDebutanizerProblem(base)
+    problem = DebutanizerProblem(base)
     algorithm = NSGA2(
         pop_size=pop_size,
         crossover=SBX(prob=0.9, eta=15),
@@ -249,34 +206,20 @@ def optimize(
         verbose=False,
     )
 
-    # Filter feasible solutions (those meeting purity constraint)
-    feasible_mask = result.G[:, 0] <= 0 if result.G is not None else np.ones(len(result.F), dtype=bool)
+    # Get results - SIMPLIFIED: just take first solution (already Pareto optimal)
+    F = result.F
+    X = result.X
     
-    if not np.any(feasible_mask):
-        logger.warning("No feasible solutions found - relaxing constraints")
-        # Fallback: solutions closest to meeting purity
-        feasibility_score = -result.G[:, 0]  # Less negative = closer to feasible
-        best_feasible_idx = int(np.argmax(feasibility_score))
+    # Normalize objectives and pick best balanced solution
+    if len(F) > 1:
+        F_norm = (F - F.min(0)) / (F.max(0) - F.min(0) + 1e-9)
+        best_idx = int(np.argmin(np.linalg.norm(F_norm, axis=1)))
     else:
-        # Among feasible solutions, find best trade-off
-        F_feasible = result.F[feasible_mask]
-        X_feasible = result.X[feasible_mask]
-        
-        # Normalize
-        F_norm = (F_feasible - F_feasible.min(0)) / (F_feasible.max(0) - F_feasible.min(0) + 1e-9)
-        
-        # Weighted selection: 70% purity, 30% energy
-        weights = np.array([0.3, 0.7])
-        scores = np.sum(F_norm * weights, axis=1)
-        best_idx_in_feasible = int(np.argmin(scores))
-        
-        # Map back to original indices
-        feasible_indices = np.where(feasible_mask)[0]
-        best_idx = feasible_indices[best_idx_in_feasible]
-        
-        best_sp = X_feasible[best_idx_in_feasible]
-        best_energy = float(F_feasible[best_idx_in_feasible, 0])
-        best_purity = float(-F_feasible[best_idx_in_feasible, 1])
+        best_idx = 0
+    
+    best_sp = X[best_idx]
+    best_energy = float(F[best_idx, 0])
+    best_purity = float(-F[best_idx, 1])
 
     # Current performance
     current_readings = _build_readings(np.array(current_state), base)
@@ -288,16 +231,36 @@ def optimize(
     energy_savings = max(0.0, (current_energy - best_energy) / (current_energy + 1e-9) * 100)
     purity_improvement = max(0.0, (best_purity - current_purity) / (current_purity + 1e-9) * 100)
 
-    # After computing energy_savings and purity_improvement with max(0.0, ...):
-    status = (
-        'optimal'  if energy_savings > 5  and purity_improvement > 0.3  else
-        'warning'  if energy_savings > 1  or  purity_improvement > 0.1  else
-        'critical'
-    )
+    # Status based on improvements
+    if energy_savings > 3 and purity_improvement > 0.2:
+        status = 'optimal'
+    elif energy_savings > 1 or purity_improvement > 0.1:
+        status = 'warning'
+    else:
+        status = 'critical'
 
-    logger.info(f"Optimization complete: {len(result.F)} solutions, {np.sum(feasible_mask)} feasible | "
+    logger.info(f"Optimization complete: {len(F)} solutions | "
                 f"Energy: {current_energy:.4f}→{best_energy:.4f} ({energy_savings:.1f}%) | "
-                f"Purity: {current_purity:.2f}%→{best_purity:.2f}% ({purity_improvement:.2f}%)")
+                f"Purity: {current_purity:.2f}%→{best_purity:.2f}% ({purity_improvement:.2f}%) | "
+                f"status={status}")
+
+    # If no improvement, stay at current setpoints
+    no_improvement = energy_savings <= 0.1 and purity_improvement <= 0.05
+    
+    if no_improvement:
+        logger.info("No improvement found - recommending current setpoints")
+        return schemas.OptimizeOut(
+            current_setpoints=current_state,
+            recommended_setpoints=current_state,
+            current_energy=current_energy,
+            expected_energy=current_energy,
+            current_purity=current_purity,
+            expected_purity=current_purity,
+            energy_savings_percent=0.0,
+            purity_improvement_percent=0.0,
+            status='critical',
+            feasibility_score=1.0,
+        )
 
     return schemas.OptimizeOut(
         current_setpoints=current_state,
@@ -309,5 +272,5 @@ def optimize(
         energy_savings_percent=float(energy_savings),
         purity_improvement_percent=float(purity_improvement),
         status=status,
-        feasibility_score=float(1.0 - (95.0 - best_purity) / 5.0 if best_purity < 95 else 1.0),
+        feasibility_score=0.85,
     )

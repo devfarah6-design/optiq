@@ -1,21 +1,23 @@
 """
 OPTIQ DSS · Multi-Objective Optimiser
-Algorithm : Bayesian Optimization (scikit-optimize)
-Objectives : minimise energy · maximise purity (weighted sum)
+Algorithm : NSGA-II (pymoo)
+Objectives : minimise energy · maximise purity
 Setpoints  : 2FI422.SP · 2TI1_414.SP · 2TIC403.SP
 
-Advantages over NSGA-II:
-  - Much faster (6-10 seconds vs 70+ seconds)
-  - Better for expensive black-box functions
-  - Built-in exploration/exploitation trade-off
-  - Handles constraints naturally
+Fixes applied:
+  - base_readings uses ALL 33 nominal values (not zeros) when no live data
+  - current_state uses real nominal setpoints as fallback
+  - negative savings clamped to 0 with status=critical
+  - energy/purity clamped to physically valid ranges before comparison
 """
 import logging
 import numpy as np
-from skopt import gp_minimize
-from skopt.space import Real
-from skopt.utils import use_named_args
-from skopt.callbacks import DeltaYStopper, EarlyStopper
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.core.problem import Problem
+from pymoo.optimize import minimize as pymoo_minimize
+from pymoo.operators.crossover.sbx import SBX
+from pymoo.operators.mutation.pm import PM
+from pymoo.termination import get_termination
 from app.model_loader import model_wrapper
 from app.alerts import COLUMN_ORDER
 from app import schemas
@@ -42,6 +44,8 @@ SETPOINT_DEFS = [
 ]
 
 # ── Full 33-sensor nominal baseline ──────────────────────────────────────────
+# ALL sensors at nominal values — model gets a realistic operating context.
+# Zeros for 30 sensors is out-of-distribution and produces garbage predictions.
 _ALL_NOMINALS: dict[str, float] = {
     '2TIC403.PV':       94.0,
     '2TIC403.OP':       52.0,
@@ -104,10 +108,18 @@ _SETPOINT_INDICES: list = _resolve_indices()
 
 
 def _make_base_readings(base_readings: list | None) -> list:
-    """Build a full 33-element reading vector."""
+    """
+    Build a full 33-element reading vector.
+
+    Priority:
+      1. Use live base_readings from ingestion (best — real process context)
+      2. Fall back to ALL_NOMINALS (all 33 sensors at typical values)
+         Never use zeros — that's out-of-distribution for the model.
+    """
     if base_readings and len(base_readings) >= _N_FEATURES:
         return list(base_readings[:_N_FEATURES])
 
+    # Build from nominals using COLUMN_ORDER
     readings = [0.0] * _N_FEATURES
     for tag, idx in COLUMN_ORDER.items():
         if idx < _N_FEATURES:
@@ -126,15 +138,20 @@ def _build_readings(setpoints: np.ndarray, base: list) -> list:
 
 
 def _validate_current_state(current_state: list) -> list:
-    """Ensure current_state contains realistic setpoint values."""
+    """
+    Ensure current_state contains realistic setpoint values.
+    Also log if values seem like PVs (off by significant amount)
+    """
     validated = []
     for i, (val, sp) in enumerate(zip(current_state, SETPOINT_DEFS)):
+        # Check if value is suspiciously different from typical setpoint range
         if val < sp['min'] * 0.9 or val > sp['max'] * 1.1:
             logger.error(
                 f"current_state[{i}]={val} is FAR outside bounds "
                 f"[{sp['min']}, {sp['max']}] for {sp['sp_tag']}. "
                 f"Are you sending a PV value instead of SP?"
             )
+            # Don't auto-correct drastically - raise error for debugging
             raise ValueError(
                 f"Setpoint {sp['sp_tag']} value {val} is outside expected range. "
                 f"Expected between {sp['min']} and {sp['max']}. "
@@ -152,220 +169,145 @@ def _validate_current_state(current_state: list) -> list:
     return validated
 
 
-# ── Bayesian Optimization Objective ───────────────────────────────────────────
-def _objective(
-    steam: float,
-    reflux: float,
-    bottom: float,
-    base: list,
-    current_energy: float,
-    w_energy: float = 0.4,
-    w_purity: float = 0.6,
-) -> float:
-    """
-    Weighted scalar objective for Bayesian Optimization.
-    Lower value is better.
-    
-    Objective = w_energy * (energy/current_energy) - w_purity * (purity/100)
-    """
-    setpoints = np.array([steam, reflux, bottom])
-    readings = _build_readings(setpoints, base)
-    pred = model_wrapper.predict(readings)
-    
-    energy = pred['energy']
-    purity = pred['purity']
-    
-    # Normalize energy by current value
-    normalized_energy = energy / (current_energy + 1e-9)
-    
-    # Normalize purity (higher is better, so negative for minimization)
-    normalized_purity = -purity / 100.0
-    
-    # Combined objective
-    objective = w_energy * normalized_energy + w_purity * normalized_purity
-    
-    # Penalty for low purity (< 95%)
-    if purity < 95.0:
-        penalty = (95.0 - purity) * 10.0
-        objective += penalty
-        logger.debug(f"Purity penalty: {penalty:.2f} for purity={purity:.2f}%")
-    
-    return objective
+# ── pymoo Problem ─────────────────────────────────────────────────────────────
+class DebutanizerProblem(Problem):
+    def __init__(self, base: list):
+        xl = np.array([sp['min'] for sp in SETPOINT_DEFS])
+        xu = np.array([sp['max'] for sp in SETPOINT_DEFS])
+        super().__init__(n_var=3, n_obj=2, n_ieq_constr=0, xl=xl, xu=xu)
+        self.base = base
+
+    def _evaluate(self, x, out, *args, **kwargs):
+        f1, f2 = [], []
+        for sp in x:
+            r = _build_readings(sp, self.base)
+            pred = model_wrapper.predict(r)
+            f1.append(pred['energy'])
+            f2.append(-pred['purity'])
+        out['F'] = np.column_stack([f1, f2])
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+# optimizer.py - Complete improved version
+
 def optimize(
     current_state: list,
     base_readings: list | None = None,
-    n_calls: int = 80,           # Number of evaluations (replaces pop_size * n_gen)
-    initial_point_generator: str = 'sobol',  # Better space coverage
-    acq_func: str = 'EI',        # Expected Improvement
+    pop_size: int = 100,      # Increased for better exploration
+    n_gen: int = 60,          # More generations
     seed: int = 42,
-    w_energy: float = 0.4,       # Weight for energy (0.4 = 40%)
-    w_purity: float = 0.6,       # Weight for purity (0.6 = 60%)
 ) -> schemas.OptimizeOut:
-    """
-    Bayesian Optimization for debutanizer setpoints.
-    
-    Parameters
-    ----------
-    current_state : [steam, reflux, bottom] - current setpoints
-    base_readings : full 33-sensor reading vector
-    n_calls : number of objective evaluations (80 = ~6-10 seconds runtime)
-    initial_point_generator : 'sobol', 'lhs', 'random' - how to sample initial points
-    acq_func : 'EI' (Expected Improvement), 'PI' (Probability of Improvement), 'LCB' (Lower Confidence Bound)
-    w_energy, w_purity : relative importance (should sum to 1.0)
-    """
+    """Improved NSGA-II with constraints and better selection"""
     
     if len(current_state) != 3:
         raise ValueError(f"optimize() expects 3 setpoints, got {len(current_state)}")
-    
+
     # Validate current state
     current_state = _validate_current_state(current_state)
     base = _make_base_readings(base_readings)
+
+    # Define optimization problem with constraints
+    class ConstrainedDebutanizerProblem(Problem):
+        def __init__(self, base_list: list):
+            xl = np.array([sp['min'] for sp in SETPOINT_DEFS])
+            xu = np.array([sp['max'] for sp in SETPOINT_DEFS])
+            super().__init__(n_var=3, n_obj=2, n_ieq_constr=1, xl=xl, xu=xu)
+            self.base = base_list
+
+        def _evaluate(self, x, out, *args, **kwargs):
+            f1, f2, constraints = [], [], []
+            
+            for sp in x:
+                r = _build_readings(sp, self.base)
+                pred = model_wrapper.predict(r)
+                
+                # Objectives
+                f1.append(pred['energy'])
+                f2.append(-pred['purity'])  # Minimize negative purity
+                
+                # Constraint: purity >= 95% (critical for product quality)
+                # G <= 0 means feasible
+                constraints.append(95.0 - pred['purity'])
+            
+            out['F'] = np.column_stack([f1, f2])
+            out['G'] = np.column_stack([constraints])
+
+    # Run optimization
+    problem = ConstrainedDebutanizerProblem(base)
+    algorithm = NSGA2(
+        pop_size=pop_size,
+        crossover=SBX(prob=0.9, eta=15),
+        mutation=PM(eta=20),
+        eliminate_duplicates=True,
+    )
     
-    # Get current performance for normalization
+    result = pymoo_minimize(
+        problem,
+        algorithm,
+        get_termination("n_gen", n_gen),
+        seed=seed,
+        verbose=False,
+    )
+
+    # Filter feasible solutions (those meeting purity constraint)
+    feasible_mask = result.G[:, 0] <= 0 if result.G is not None else np.ones(len(result.F), dtype=bool)
+    
+    if not np.any(feasible_mask):
+        logger.warning("No feasible solutions found - relaxing constraints")
+        # Fallback: solutions closest to meeting purity
+        feasibility_score = -result.G[:, 0]  # Less negative = closer to feasible
+        best_feasible_idx = int(np.argmax(feasibility_score))
+    else:
+        # Among feasible solutions, find best trade-off
+        F_feasible = result.F[feasible_mask]
+        X_feasible = result.X[feasible_mask]
+        
+        # Normalize
+        F_norm = (F_feasible - F_feasible.min(0)) / (F_feasible.max(0) - F_feasible.min(0) + 1e-9)
+        
+        # Weighted selection: 70% purity, 30% energy
+        weights = np.array([0.3, 0.7])
+        scores = np.sum(F_norm * weights, axis=1)
+        best_idx_in_feasible = int(np.argmin(scores))
+        
+        # Map back to original indices
+        feasible_indices = np.where(feasible_mask)[0]
+        best_idx = feasible_indices[best_idx_in_feasible]
+        
+        best_sp = X_feasible[best_idx_in_feasible]
+        best_energy = float(F_feasible[best_idx_in_feasible, 0])
+        best_purity = float(-F_feasible[best_idx_in_feasible, 1])
+
+    # Current performance
     current_readings = _build_readings(np.array(current_state), base)
     current_pred = model_wrapper.predict(current_readings)
     current_energy = float(np.clip(current_pred['energy'], 0.5, 5.0))
     current_purity = float(np.clip(current_pred['purity'], 80.0, 99.99))
-    
-    # Define search space
-    space = [
-        Real(SETPOINT_DEFS[0]['min'], SETPOINT_DEFS[0]['max'], 
-             name='steam', prior='uniform'),
-        Real(SETPOINT_DEFS[1]['min'], SETPOINT_DEFS[1]['max'], 
-             name='reflux', prior='uniform'),
-        Real(SETPOINT_DEFS[2]['min'], SETPOINT_DEFS[2]['max'], 
-             name='bottom', prior='uniform'),
-    ]
-    
-    # Create objective with fixed parameters
-    @use_named_args(space)
-    def objective_wrapper(**params):
-        return _objective(
-            steam=params['steam'],
-            reflux=params['reflux'],
-            bottom=params['bottom'],
-            base=base,
-            current_energy=current_energy,
-            w_energy=w_energy,
-            w_purity=w_purity,
-        )
-    
-    # Early stopping callbacks
-    callbacks = [
-        DeltaYStopper(delta=0.001, n_best=5),  # Stop if improvement < 0.001 over 5 iterations
-    ]
-    
-    logger.info(f"Starting Bayesian Optimization with {n_calls} evaluations...")
-    logger.info(f"  Weights: Energy={w_energy:.1%}, Purity={w_purity:.1%}")
-    logger.info(f"  Current: Energy={current_energy:.4f}, Purity={current_purity:.2f}%")
-    
-    # Run Bayesian Optimization
-    result = gp_minimize(
-        func=objective_wrapper,
-        dimensions=space,
-        n_calls=n_calls,
-        n_initial_points=15,                    # Initial random exploration
-        initial_point_generator=initial_point_generator,
-        acq_func=acq_func,
-        acq_optimizer='sampling',
-        random_state=seed,
-        verbose=False,
-        callback=callbacks,
-    )
-    
-    # Extract best solution
-    best_setpoints = result.x
-    best_energy, best_purity = _evaluate_setpoints(best_setpoints, base)
-    
+
     # Calculate improvements
     energy_savings = max(0.0, (current_energy - best_energy) / (current_energy + 1e-9) * 100)
     purity_improvement = max(0.0, (best_purity - current_purity) / (current_purity + 1e-9) * 100)
-    
-    # Determine status
-    if purity_improvement < 0.1 and energy_savings > 0:
-        status = 'warning' if energy_savings > 2 else 'critical'
-    elif energy_savings > 5 and purity_improvement > 0.3:
-        status = 'optimal'
-    elif energy_savings > 2 or purity_improvement > 0.1:
-        status = 'warning'
-    else:
-        status = 'critical'
-    
-    # Check if we improved at all
-    no_improvement = energy_savings <= 0.1 and purity_improvement <= 0.05
-    
-    logger.info(f"Bayesian Optimization complete after {len(result.x_iters)} evaluations")
-    logger.info(f"  Best: Steam={best_setpoints[0]:.1f}, Reflux={best_setpoints[1]:.1f}, Bottom={best_setpoints[2]:.1f}")
-    logger.info(f"  Energy: {current_energy:.4f} → {best_energy:.4f} ({energy_savings:.1f}%)")
-    logger.info(f"  Purity: {current_purity:.2f}% → {best_purity:.2f}% ({purity_improvement:.2f}%)")
-    
-    return schemas.OptimizeOut(
-        current_setpoints=current_state,
-        recommended_setpoints=current_state if no_improvement else best_setpoints,
-        current_energy=current_energy,
-        expected_energy=current_energy if no_improvement else best_energy,
-        current_purity=current_purity,
-        expected_purity=current_purity if no_improvement else best_purity,
-        energy_savings_percent=0.0 if no_improvement else float(energy_savings),
-        purity_improvement_percent=0.0 if no_improvement else float(purity_improvement),
-        status='critical' if no_improvement else status,
-        feasibility_score=float(1.0 - (95.0 - best_purity) / 5.0 if best_purity < 95 else 1.0),
+
+    # After computing energy_savings and purity_improvement with max(0.0, ...):
+    status = (
+        'optimal'  if energy_savings > 5  and purity_improvement > 0.3  else
+        'warning'  if energy_savings > 1  or  purity_improvement > 0.1  else
+        'critical'
     )
 
+    logger.info(f"Optimization complete: {len(result.F)} solutions, {np.sum(feasible_mask)} feasible | "
+                f"Energy: {current_energy:.4f}→{best_energy:.4f} ({energy_savings:.1f}%) | "
+                f"Purity: {current_purity:.2f}%→{best_purity:.2f}% ({purity_improvement:.2f}%)")
 
-def _evaluate_setpoints(setpoints: list, base: list) -> tuple:
-    """Helper to evaluate a single setpoint combination."""
-    readings = _build_readings(np.array(setpoints), base)
-    pred = model_wrapper.predict(readings)
-    return float(pred['energy']), float(pred['purity'])
-
-
-# ── Optional: Multi-point optimization for Pareto front approximation ─────────
-def optimize_pareto(
-    current_state: list,
-    base_readings: list | None = None,
-    n_calls: int = 150,
-    n_points: int = 10,
-    seed: int = 42,
-) -> list:
-    """
-    Run multiple Bayesian optimizations with different weights to approximate Pareto front.
-    Returns list of optimal points with different trade-offs.
-    """
-    current_state = _validate_current_state(current_state)
-    base = _make_base_readings(base_readings)
-    
-    results = []
-    weight_pairs = [
-        (0.2, 0.8),  # Prefer purity
-        (0.3, 0.7),
-        (0.4, 0.6),  # Balanced
-        (0.5, 0.5),
-        (0.6, 0.4),
-        (0.7, 0.3),
-        (0.8, 0.2),  # Prefer energy
-    ]
-    
-    for w_energy, w_purity in weight_pairs:
-        logger.info(f"Running optimization with weights: E={w_energy}, P={w_purity}")
-        
-        result = optimize(
-            current_state=current_state,
-            base_readings=base_readings,
-            n_calls=n_calls // len(weight_pairs),
-            w_energy=w_energy,
-            w_purity=w_purity,
-            seed=seed + int(w_energy * 100),
-        )
-        
-        results.append({
-            'weights': (w_energy, w_purity),
-            'setpoints': result.recommended_setpoints,
-            'energy': result.expected_energy,
-            'purity': result.expected_purity,
-        })
-    
-    return results
+    return schemas.OptimizeOut(
+        current_setpoints=current_state,
+        recommended_setpoints=best_sp.tolist(),
+        current_energy=current_energy,
+        expected_energy=best_energy,
+        current_purity=current_purity,
+        expected_purity=best_purity,
+        energy_savings_percent=float(energy_savings),
+        purity_improvement_percent=float(purity_improvement),
+        status=status,
+        feasibility_score=float(1.0 - (95.0 - best_purity) / 5.0 if best_purity < 95 else 1.0),
+    )

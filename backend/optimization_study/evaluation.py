@@ -72,7 +72,36 @@ def convergence_speed(convergence: list, target_fraction: float = 0.95) -> int:
             return i
     return len(convergence)
 
-
+# In your evaluation.py
+def test_model_sensitivity():
+    """Check if model responds to changes"""
+    
+    test_cases = [
+        ([2500, 74, 94], "Low steam"),
+        ([3500, 74, 94], "High steam"),
+        ([3000, 68, 94], "Cold reflux"),
+        ([3000, 80, 94], "Hot reflux"),
+        ([3000, 74, 88], "Cold bottom"),
+        ([3000, 74, 100], "Hot bottom"),
+    ]
+    
+    results = []
+    for sp, label in test_cases:
+        e, p = evaluate(np.array(sp))
+        results.append((label, e, p))
+        print(f"{label:20s}: Steam={sp[0]:.0f}, Reflux={sp[1]:.0f}, Bottom={sp[2]:.0f} → E={e:.4f}, P={p:.2f}%")
+    
+    # Check variance
+    energies = [r[1] for r in results]
+    purities = [r[2] for r in results]
+    
+    print(f"\nEnergy range: {max(energies)-min(energies):.4f} (should be >0.3)")
+    print(f"Purity range: {max(purities)-min(purities):.2f}% (should be >1.0%)")
+    
+    if max(purities)-min(purities) < 0.1:
+        print("❌ CRITICAL: Purity is constant! Model is broken.")
+    if max(energies)-min(energies) < 0.1:
+        print("❌ CRITICAL: Energy is nearly constant! Model is broken.")
 def stability_score(results: List[OptResult]) -> Dict[str, float]:
     """
     Run the same algorithm with multiple seeds, measure variance in results.

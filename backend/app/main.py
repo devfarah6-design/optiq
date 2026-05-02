@@ -131,7 +131,9 @@ app.add_middleware(
         "http://localhost:5173",
         "http://for:80",
           "http://localhost:5173",
-          "https://optiq-dss.netlify.app",   # ← add this after you get your URL
+          "https://optiq-two.vercel.app",
+          "https://*.vercel.app",
+        
           "https://*.netlify.app",   
           "https://optiq0optim.netlify.app"# ← allows all netlify preview URLs
     ],

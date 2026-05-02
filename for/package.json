@@ -10,6 +10,7 @@
     "@types/axios": "^0.9.36",
     "@types/chart.js": "^2.9.41",
     "@types/react-chartjs-2": "^2.0.2",
+    "@vercel/speed-insights": "^2.0.0",
     "axios": "^1.13.6",
     "chart.js": "^4.5.1",
     "react": "^18.2.0",

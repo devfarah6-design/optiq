@@ -41,8 +41,6 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 # ── OP tag mapping: model feat_col name → COLUMN_ORDER tag (no "- Snapshot") ─
-# The model was trained on CSV columns that have "- Snapshot" suffix,
-# but the live WebSocket data uses the base tag name.
 _OP_TAG_MAP = {
     '2TIC403.OP - Snapshot': '2TIC403.OP',
     '2FIC419.OP - Snapshot': '2FIC419.OP',
@@ -62,49 +60,41 @@ _OP_NOMINALS = {
 
 # Baseline targets (median from training data)
 _TARGET_BASELINE = {
-    'Target_Energy':     996.4,
-    'Target_Purity_Pct':  98.45,
-    'Target_Butane_Flow':  3.17,
+    'Target_Energy':      996.4,
+    'Target_Purity_Pct':   98.45,
+    'Target_Butane_Flow':   3.17,
 }
 
-# Hard physical limits — values outside these are impossible and indicate
-# model/feature mismatch.  We clip ALL predictions to these ranges so a
-# single bad prediction can never cascade through the lag window.
-_ENERGY_RANGE = (100.0,  3000.0)   # kJ/kg  (reasonable steam consumption)
-_PURITY_RANGE = ( 60.0,    99.99)  # %mol
-_BUTANE_RANGE = (  0.1,    20.0)   # m³/h
+# Hard physical limits
+_ENERGY_RANGE = (100.0, 3000.0)
+_PURITY_RANGE = ( 60.0,   99.99)
+_BUTANE_RANGE = (  0.1,   20.0)
 
 
 class ModelWrapper:
 
     def __init__(self):
-        self.model         = None
-        self.sc_X          = None          # StandardScaler for features
-        self.feat_cols     = []            # 13 feature column names
-        self.op_cols       = []            # OP column names (with "- Snapshot")
-        self.n_lags        = 3
-        self.target_names  = [
+        self.model        = None
+        self.sc_X         = None
+        self.feat_cols    = []
+        self.op_cols      = []
+        self.n_lags       = 3
+        self.target_names = [
             'Target_Energy',
             'Target_Purity_Pct',
             'Target_Butane_Flow',
         ]
-        self.n_features    = 13
-        self.model_type    = 'dummy'
-        self.model_family  = 'Dummy'
+        self.n_features   = 13
+        self.model_type   = 'dummy'
+        self.model_family = 'Dummy'
 
-        # Rolling window of (energy, purity, butane) — last n_lags predictions
-        # Initialised at median training values
         self._pred_window: deque = deque(
             [(_TARGET_BASELINE['Target_Energy'],
               _TARGET_BASELINE['Target_Purity_Pct'],
               _TARGET_BASELINE['Target_Butane_Flow'])] * 3,
             maxlen=3,
         )
-
-        # Mapping from OP col name → index in live readings vector
         self._op_indices: dict = {}
-
-        # Counter to detect sustained clipping (model stuck at boundary)
         self._clip_streak: int = 0
 
         self._load()
@@ -112,10 +102,8 @@ class ModelWrapper:
     # ── Loading ───────────────────────────────────────────────────────────────
     def _load(self):
         path = settings.model_path
-
-        # Prefer explicit path, then fall back to models/ directory
         candidates = [path]
-        base_dir   = os.path.dirname(path) or 'models'
+        base_dir = os.path.dirname(path) or 'models'
         candidates.append(os.path.join(base_dir, 'best_xgb_surrogate.pkl'))
 
         for p in candidates:
@@ -124,74 +112,64 @@ class ModelWrapper:
                 return
 
         logger.warning(
-            "⚠ No XGBoost surrogate found. "
+            "No XGBoost surrogate found. "
             f"Expected: {candidates}\n"
             "Using physics-based dummy model."
         )
-        self.model_type = 'dummy'
+        self.model_type   = 'dummy'
+        self.model_family = 'Physics'
 
     def _load_xgb(self, path: str):
         try:
             import joblib
             bundle = joblib.load(path)
 
-            self.model       = bundle['model']
-            self.sc_X        = bundle['sc_X']
-            self.feat_cols   = bundle['feat_cols']       # list[13]
-            self.op_cols     = bundle.get('op_cols', [])
-            self.n_lags      = bundle.get('n_lags', 3)
-
-            tgts = bundle.get('targets', self.target_names)
-            self.target_names = tgts
+            self.model        = bundle['model']
+            self.sc_X         = bundle['sc_X']
+            self.feat_cols    = bundle['feat_cols']
+            self.op_cols      = bundle.get('op_cols', [])
+            self.n_lags       = bundle.get('n_lags', 3)
+            self.target_names = bundle.get('targets', self.target_names)
             self.n_features   = len(self.feat_cols)
             self.model_type   = 'xgboost'
             self.model_family = 'XGBoost'
 
-            # Build OP index map — maps feat_col → live readings vector index
             self._build_op_indices()
 
-            # ── Validate: test the model on baseline inputs ──────────────────
-            # If the model predicts outside a sane physical range, the scaler
-            # unit mismatch means this deployment can't use it.
+            # Validate on baseline inputs
             try:
                 op_nom = {c: _OP_NOMINALS.get(c, 50.0) for c in self.op_cols}
                 fv     = self._build_feature_vector(op_nom)
                 X_test = fv.reshape(1, -1)
                 if self.sc_X is not None:
                     X_test = self.sc_X.transform(X_test)
-                Y_test = self.model.predict(X_test)[0]
+                Y_test       = self.model.predict(X_test)[0]
                 e_test, p_test = float(Y_test[0]), float(Y_test[1])
 
-                # Accept only if predictions are in a physically credible range
-                # (anywhere above the clip floor by more than 5%)
-                e_ok = e_test > _ENERGY_RANGE[0] * 1.05
-                p_ok = p_test > _PURITY_RANGE[0] * 1.05
-                if not (e_ok and p_ok):
+                if not (e_test > _ENERGY_RANGE[0] * 1.05 and p_test > _PURITY_RANGE[0] * 1.05):
                     logger.warning(
-                        f"⚠ XGBoost validation failed — model predicts "
-                        f"energy={e_test:.2f}, purity={p_test:.2f} on baseline inputs. "
-                        f"Unit mismatch between training data and current deployment. "
-                        f"Falling back to physics-based model."
+                        f"XGBoost validation failed — energy={e_test:.2f}, purity={p_test:.2f} "
+                        f"on baseline inputs. Falling back to physics model."
                     )
                     self.model_type   = 'dummy'
                     self.model_family = 'Physics'
                     return
+
                 logger.info(
-                    f"✓ XGBoost surrogate loaded & validated from {path} | "
-                    f"{self.n_features} features | {self.n_lags} lags | "
-                    f"baseline test: E={e_test:.1f}, P={p_test:.2f}%"
+                    f"XGBoost surrogate loaded & validated from {path} | "
+                    f"{self.n_features} features | baseline: E={e_test:.1f}, P={p_test:.2f}%"
                 )
             except Exception as ve:
-                logger.warning(f"⚠ XGBoost validation error ({ve}) — using physics model")
+                logger.warning(f"XGBoost validation error ({ve}) — using physics model")
                 self.model_type   = 'dummy'
                 self.model_family = 'Physics'
 
         except Exception as e:
             logger.error(f"Failed to load XGBoost model: {e}", exc_info=True)
-            self.model_type = 'dummy'
+            self.model_type   = 'dummy'
+            self.model_family = 'Physics'
 
     def _build_op_indices(self):
-        """Map OP feature column names to COLUMN_ORDER indices."""
         try:
             from app.alerts import COLUMN_ORDER
             self._op_indices = {}
@@ -204,45 +182,29 @@ class ModelWrapper:
         except Exception as e:
             logger.warning(f"Could not build OP indices: {e}")
 
-    # ── Feature vector assembly ────────────────────────────────────────────────
+    # ── Feature vector assembly ───────────────────────────────────────────────
     def _build_feature_vector(self, op_values: dict) -> np.ndarray:
-        """
-        Build 13-element feature vector:
-          [E_lag1, E_lag2, E_lag3,
-           P_lag1, P_lag2, P_lag3,
-           B_lag1, B_lag2, B_lag3,
-           OP1, OP2, OP3, OP4]
-
-        Parameters
-        ----------
-        op_values : {feat_col_name: float} — current OP values
-        """
-        # Most recent prediction first (lag1), then lag2, lag3
-        window = list(self._pred_window)   # oldest first in deque
-        # window[-1] = most recent (lag1), window[-2] = lag2, window[-3] = lag3
+        window = list(self._pred_window)
         lags_e = [window[-1][0], window[-2][0], window[-3][0]]
         lags_p = [window[-1][1], window[-2][1], window[-3][1]]
         lags_b = [window[-1][2], window[-2][2], window[-3][2]]
 
-        # Assemble vector matching feat_cols order
         fv = np.zeros(len(self.feat_cols), dtype=np.float32)
         for i, col in enumerate(self.feat_cols):
-            if col == 'Target_Energy_lag1':     fv[i] = lags_e[0]
-            elif col == 'Target_Energy_lag2':   fv[i] = lags_e[1]
-            elif col == 'Target_Energy_lag3':   fv[i] = lags_e[2]
-            elif col == 'Target_Purity_Pct_lag1':    fv[i] = lags_p[0]
-            elif col == 'Target_Purity_Pct_lag2':    fv[i] = lags_p[1]
-            elif col == 'Target_Purity_Pct_lag3':    fv[i] = lags_p[2]
-            elif col == 'Target_Butane_Flow_lag1':   fv[i] = lags_b[0]
-            elif col == 'Target_Butane_Flow_lag2':   fv[i] = lags_b[1]
-            elif col == 'Target_Butane_Flow_lag3':   fv[i] = lags_b[2]
+            if   col == 'Target_Energy_lag1':      fv[i] = lags_e[0]
+            elif col == 'Target_Energy_lag2':      fv[i] = lags_e[1]
+            elif col == 'Target_Energy_lag3':      fv[i] = lags_e[2]
+            elif col == 'Target_Purity_Pct_lag1':  fv[i] = lags_p[0]
+            elif col == 'Target_Purity_Pct_lag2':  fv[i] = lags_p[1]
+            elif col == 'Target_Purity_Pct_lag3':  fv[i] = lags_p[2]
+            elif col == 'Target_Butane_Flow_lag1': fv[i] = lags_b[0]
+            elif col == 'Target_Butane_Flow_lag2': fv[i] = lags_b[1]
+            elif col == 'Target_Butane_Flow_lag3': fv[i] = lags_b[2]
             else:
-                # OP column
                 fv[i] = op_values.get(col, _OP_NOMINALS.get(col, 50.0))
         return fv
 
     def _extract_op_from_readings(self, readings: list) -> dict:
-        """Extract current OP values from live sensor readings vector."""
         op_vals = {}
         for col in self.op_cols:
             idx = self._op_indices.get(col)
@@ -254,16 +216,9 @@ class ModelWrapper:
 
     # ── Public inference ──────────────────────────────────────────────────────
     def predict(self, readings: list) -> dict:
-        """
-        Predict from live sensor readings vector.
-
-        readings : list[float] — full live sensor vector from WebSocket
-        Returns  : dict with energy, purity, butane, model_type, confidence
-        """
-        # Heal window BEFORE building features — prevents bad-lag cascade
         self._sanitize_window()
 
-        raw = np.array(readings, dtype=float)
+        raw           = np.array(readings, dtype=float)
         z_scores      = np.abs((raw - raw.mean()) / (raw.std() + 1e-6))
         outlier_score = float(z_scores.max())
         is_outlier    = outlier_score > 3.5
@@ -273,27 +228,23 @@ class ModelWrapper:
         else:
             energy, purity, butane = self._dummy_predict(readings)
 
-        # Log raw output for diagnosis
         logger.debug(
-            f"Model raw output — energy={energy:.2f}, purity={purity:.2f}, butane={butane:.2f} "
+            f"raw output — energy={energy:.2f}, purity={purity:.2f}, butane={butane:.4f} "
             f"| type={self.model_type}"
         )
 
-        # Clip before storing in window (prevents cascade if model extrapolates)
         raw_energy, raw_purity = energy, purity
         energy = float(np.clip(energy, *_ENERGY_RANGE))
         purity = float(np.clip(purity, *_PURITY_RANGE))
         butane = float(np.clip(butane, *_BUTANE_RANGE))
 
-        # Track how many consecutive predictions hit the clip minimum
         clipped_low = (raw_energy < _ENERGY_RANGE[0] * 1.005 or
                        raw_purity < _PURITY_RANGE[0] * 1.005)
         if clipped_low:
             self._clip_streak += 1
             if self._clip_streak >= 3:
                 logger.warning(
-                    f"⚠ {self._clip_streak} consecutive low-clip predictions — "
-                    f"resetting lag window to baseline "
+                    f"{self._clip_streak} consecutive low-clip predictions — resetting window "
                     f"(raw_energy={raw_energy:.2f}, raw_purity={raw_purity:.2f})"
                 )
                 self._reset_window()
@@ -301,7 +252,6 @@ class ModelWrapper:
         else:
             self._clip_streak = 0
 
-        # Update rolling window with this prediction
         self._pred_window.append((energy, purity, butane))
 
         return {
@@ -315,8 +265,8 @@ class ModelWrapper:
             'outlier_score': outlier_score,
         }
 
+    # ── Window management ─────────────────────────────────────────────────────
     def _reset_window(self):
-        """Unconditionally reset lag window to training median baseline."""
         self._pred_window.clear()
         for _ in range(self.n_lags):
             self._pred_window.append((
@@ -326,54 +276,84 @@ class ModelWrapper:
             ))
 
     def _sanitize_window(self):
-        """Reset lag window to baseline if values are out of range OR stuck at clip boundary.
-        A value exactly at the clip minimum means a prior prediction was clipped — this is
-        not a 'valid' process state and must be treated as corruption."""
         energies = [w[0] for w in self._pred_window]
         purities = [w[1] for w in self._pred_window]
 
-        # Out-of-range check (strict: value must be strictly inside the valid band)
         out_of_range = any(
             not (_ENERGY_RANGE[0] < e < _ENERGY_RANGE[1])
             or not (_PURITY_RANGE[0] < p < _PURITY_RANGE[1])
             or not (_BUTANE_RANGE[0] <= b <= _BUTANE_RANGE[1])
             for e, p, b in self._pred_window
         )
-
-        # Stuck-at-boundary: all lags within 0.5% of the minimum clip value
         energy_stuck = all(e <= _ENERGY_RANGE[0] * 1.005 for e in energies)
         purity_stuck = all(p <= _PURITY_RANGE[0] * 1.005 for p in purities)
 
         if out_of_range or energy_stuck or purity_stuck:
             reason = ('out-of-range' if out_of_range
-                      else f'stuck at clip boundary (energy={energies[0]:.1f}, purity={purities[0]:.1f})')
-            logger.warning(f"⚠ Lag window {reason} — resetting to baseline")
+                      else f'stuck at boundary (E={energies[0]:.1f}, P={purities[0]:.1f})')
+            logger.warning(f"Lag window {reason} — resetting to baseline")
             self._reset_window()
 
+    # ── Physics predictors ────────────────────────────────────────────────────
+    def _dummy_predict(self, readings: list):
+        """Physics-based predictor driven by live sensor readings."""
+        steam_cond = readings[31] if len(readings) > 31 else 2950.0
+        c5_imp     = readings[32] if len(readings) > 32 else 0.35
+        bottom_t   = readings[0]  if len(readings) > 0  else 94.0
+        pressure   = readings[15] if len(readings) > 15 else 6.2
+
+        steam_ratio = steam_cond / 2950.0
+        temp_effect = (bottom_t - 94.0) * 8.0
+        energy = float(np.clip(996.4 * steam_ratio + temp_effect, 200.0, 2500.0))
+
+        purity_from_c5  = 100.0 - c5_imp * 4.43
+        pressure_effect = -(pressure - 6.2) * 0.4
+        purity = float(np.clip(purity_from_c5 + pressure_effect, 70.0, 99.9))
+
+        butane = float(np.clip(3.17 * (1.0 + (bottom_t - 94.0) * 0.012), 0.5, 15.0))
+        return energy, purity, butane
+
+    def _physics_predict(self, op_values: dict):
+        """OP-sensitive physics predictor for the optimizer (dummy-mode only)."""
+        tic403 = op_values.get('2TIC403.OP - Snapshot', 52.0)
+        fic419 = op_values.get('2FIC419.OP - Snapshot', 48.0)
+        lic409 = op_values.get('2LIC409.OP - Snapshot', 50.0)
+        pic409 = op_values.get('2PIC409.OP - Snapshot', 45.0)
+
+        window = list(self._pred_window)
+        base_e = float(np.clip(window[-1][0] if window else 996.4,  300.0, 2200.0))
+        base_p = float(np.clip(window[-1][1] if window else  98.45,  75.0,   99.5))
+        base_b = float(np.clip(window[-1][2] if window else   3.17,   0.5,   12.0))
+
+        d_tic = (tic403 - 52.0) / 10.0
+        d_lic = (lic409 - 50.0) / 10.0
+        d_pic = (pic409 - 45.0) / 10.0
+        d_fic = (fic419 - 48.0) / 10.0
+
+        energy = base_e + 48.0*d_tic + 38.0*d_lic + 22.0*d_fic - 12.0*d_pic
+        purity = base_p +  0.55*d_tic +  1.3*d_lic -  0.18*d_fic - 0.15*d_pic
+        butane = base_b * (1.0 + 0.025*d_fic - 0.008*d_tic)
+
+        return (
+            float(np.clip(energy, *_ENERGY_RANGE)),
+            float(np.clip(purity, *_PURITY_RANGE)),
+            float(np.clip(butane, *_BUTANE_RANGE)),
+        )
+
+    # ── Optimizer-facing API ──────────────────────────────────────────────────
     def predict_at_op(self, op_values: dict, update_window: bool = False) -> tuple:
-        """
-        Predict (energy, purity, butane) for a specific OP configuration.
-        Used by the optimizer and apply-simulation.
-
-        op_values       : {feat_col_name: float}
-        update_window   : if True, push result into rolling window
-
-        All outputs are clipped to physical limits to prevent cascade failures.
-        """
-        # Heal the lag window before using it as features
         self._sanitize_window()
 
         if self.model_type == 'xgboost':
-            fv   = self._build_feature_vector(op_values)
-            X    = fv.reshape(1, -1)
+            fv = self._build_feature_vector(op_values)
+            X  = fv.reshape(1, -1)
             if self.sc_X is not None:
                 X = self.sc_X.transform(X)
-            Y    = self.model.predict(X)[0]
+            Y = self.model.predict(X)[0]
             energy, purity, butane = float(Y[0]), float(Y[1]), float(Y[2])
         else:
             energy, purity, butane = self._physics_predict(op_values)
 
-        # Always clip to physical limits — prevents cascade if model extrapolates
         energy = float(np.clip(energy, *_ENERGY_RANGE))
         purity = float(np.clip(purity, *_PURITY_RANGE))
         butane = float(np.clip(butane, *_BUTANE_RANGE))
@@ -399,17 +379,14 @@ class ModelWrapper:
         return trajectory
 
     def get_current_lag_state(self) -> dict:
-        window = list(self._pred_window)
+        w = list(self._pred_window)
         return {
-            'energy_lag1': window[-1][0], 'energy_lag2': window[-2][0], 'energy_lag3': window[-3][0],
-            'purity_lag1': window[-1][1], 'purity_lag2': window[-2][1], 'purity_lag3': window[-3][1],
-            'butane_lag1': window[-1][2], 'butane_lag2': window[-2][2], 'butane_lag3': window[-3][2],
+            'energy_lag1': w[-1][0], 'energy_lag2': w[-2][0], 'energy_lag3': w[-3][0],
+            'purity_lag1': w[-1][1], 'purity_lag2': w[-2][1], 'purity_lag3': w[-3][1],
+            'butane_lag1': w[-1][2], 'butane_lag2': w[-2][2], 'butane_lag3': w[-3][2],
         }
 
-    # ── Internal helpers ──────────────────────────────────────────────────────
     def _predict_xgb(self, readings: list):
-        # Note: if model_type was downgraded to 'dummy' during validation,
-        # this method is never called — predict() routes to _dummy_predict.
         op_values = self._extract_op_from_readings(readings)
         return self.predict_at_op(op_values, update_window=False)
 
@@ -426,101 +403,11 @@ class ModelWrapper:
     @property
     def op_display(self) -> list:
         return [
-            {'col': '2TIC403.OP - Snapshot', 'tag': '2TIC403.OP', 'name': 'Bottom temp controller',    'unit': '%'},
-            {'col': '2FIC419.OP - Snapshot', 'tag': '2FIC419.OP', 'name': 'Feed flow controller',      'unit': '%'},
-            {'col': '2LIC409.OP - Snapshot', 'tag': '2LIC409.OP', 'name': 'Reflux drum level ctrl',    'unit': '%'},
-            {'col': '2LIC412.OP - Snapshot', 'tag': '2LIC412.OP', 'name': 'Bottom level controller',   'unit': '%'},
-            {'col': '2PIC409.OP - Snapshot', 'tag': '2PIC409.OP', 'name': 'Column pressure controller','unit': '%'},
-        ]
-
-
-# Module-level singleton
-model_wrapper = ModelWrapper()
-essure
-
-        # Energy: proportional to steam consumption, modulated by temperature
-        # Nominal: steam=2950 kg/h → energy=996.4 kJ/kg
-        steam_ratio = steam_cond / 2950.0
-        temp_effect = (bottom_t - 94.0) * 8.0           # ±8 kJ/kg per °C
-        energy = 996.4 * steam_ratio + temp_effect
-        energy = float(np.clip(energy, 200.0, 2500.0))
-
-        # Purity: inversely proportional to C5 impurity content
-        # Nominal: c5_imp=0.35 %mol → purity=98.45%
-        # scale = (100 - 98.45) / 0.35 = 4.43
-        purity_from_c5 = 100.0 - c5_imp * 4.43
-        # Pressure effect: higher pressure slightly reduces relative volatility → lower purity
-        pressure_effect = -(pressure - 6.2) * 0.4
-        purity = purity_from_c5 + pressure_effect
-        purity = float(np.clip(purity, 70.0, 99.9))
-
-        # Butane flow: scales with bottom temperature and feed
-        butane = float(np.clip(3.17 * (1.0 + (bottom_t - 94.0) * 0.012), 0.5, 15.0))
-        return energy, purity, butane
-
-    def _physics_predict(self, op_values: dict):
-        """OP-sensitive physics model for the dummy/fallback path.
-        Used by predict_at_op so the optimizer can find meaningful setpoints.
-
-        Controller sensitivities (DC4 debutanizer):
-          2TIC403.OP  — bottom temp:    +energy, +purity (reboiler duty)
-          2LIC409.OP  — reflux level:   +energy, ++purity (separation efficiency)
-          2LIC412.OP  — bottom level:   small energy effect, neutral purity
-          2PIC409.OP  — column pressure: -energy, -purity (VLE effect)
-          2FIC419.OP  — feed flow:      +energy, -purity (dilutes separation)
-        """
-        # Use current lag window as process baseline
-        window    = list(self._pred_window)
-        base_e    = window[-1][0] if window else _TARGET_BASELINE['Target_Energy']
-        base_p    = window[-1][1] if window else _TARGET_BASELINE['Target_Purity_Pct']
-        base_b    = window[-1][2] if window else _TARGET_BASELINE['Target_Butane_Flow']
-
-        # Clamp base to avoid using corrupted lags as reference
-        base_e = float(np.clip(base_e, 300.0, 2200.0))
-        base_p = float(np.clip(base_p, 75.0,  99.5))
-        base_b = float(np.clip(base_b, 0.5,   12.0))
-
-        tic403 = op_values.get('2TIC403.OP - Snapshot', 52.0)
-        lic409 = op_values.get('2LIC409.OP - Snapshot', 50.0)
-        lic412 = op_values.get('2LIC412.OP - Snapshot', 48.0)
-        pic409 = op_values.get('2PIC409.OP - Snapshot', 45.0)
-        fic419 = op_values.get('2FIC419.OP - Snapshot', 48.0)
-
-        # Deltas from nominal operating point (per 10% OP change)
-        d_tic = (tic403 - 52.0) / 10.0
-        d_lic = (lic409 - 50.0) / 10.0
-        d_pic = (pic409 - 45.0) / 10.0
-        d_fic = (fic419 - 48.0) / 10.0
-
-        energy = base_e + 48.0 * d_tic + 38.0 * d_lic + 22.0 * d_fic - 12.0 * d_pic
-        purity = base_p + 0.55 * d_tic + 1.3 * d_lic - 0.18 * d_fic - 0.15 * d_pic
-        butane = base_b * (1.0 + 0.025 * d_fic - 0.008 * d_tic)
-
-        energy = float(np.clip(energy, 200.0, 2500.0))
-        purity = float(np.clip(purity, 70.0,  99.9))
-        butane = float(np.clip(butane, 0.3,   15.0))
-        return energy, purity, butane
-
-    @property
-    def op_bounds(self) -> dict:
-        """Safe OP bounds per controller."""
-        return {
-            '2TIC403.OP - Snapshot': (20.0, 80.0),
-            '2FIC419.OP - Snapshot': (10.0, 90.0),
-            '2LIC409.OP - Snapshot': (10.0, 90.0),
-            '2LIC412.OP - Snapshot': (10.0, 80.0),
-            '2PIC409.OP - Snapshot': (10.0, 80.0),
-        }
-
-    @property
-    def op_display(self) -> list:
-        """Human-readable OP variable descriptions."""
-        return [
-            {'col': '2TIC403.OP - Snapshot', 'tag': '2TIC403.OP', 'name': 'Bottom temp controller',    'unit': '%'},
-            {'col': '2FIC419.OP - Snapshot', 'tag': '2FIC419.OP', 'name': 'Feed flow controller',      'unit': '%'},
-            {'col': '2LIC409.OP - Snapshot', 'tag': '2LIC409.OP', 'name': 'Reflux drum level ctrl',    'unit': '%'},
-            {'col': '2LIC412.OP - Snapshot', 'tag': '2LIC412.OP', 'name': 'Bottom level controller',   'unit': '%'},
-            {'col': '2PIC409.OP - Snapshot', 'tag': '2PIC409.OP', 'name': 'Column pressure controller','unit': '%'},
+            {'col': '2TIC403.OP - Snapshot', 'tag': '2TIC403.OP', 'name': 'Bottom temp controller',     'unit': '%'},
+            {'col': '2FIC419.OP - Snapshot', 'tag': '2FIC419.OP', 'name': 'Feed flow controller',       'unit': '%'},
+            {'col': '2LIC409.OP - Snapshot', 'tag': '2LIC409.OP', 'name': 'Reflux drum level ctrl',     'unit': '%'},
+            {'col': '2LIC412.OP - Snapshot', 'tag': '2LIC412.OP', 'name': 'Bottom level controller',    'unit': '%'},
+            {'col': '2PIC409.OP - Snapshot', 'tag': '2PIC409.OP', 'name': 'Column pressure controller', 'unit': '%'},
         ]
 
 

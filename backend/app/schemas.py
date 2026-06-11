@@ -327,4 +327,4 @@ class ParetoOut(BaseModel):
 class ConfigSet(BaseModel):
     key:   str
     value: Any
-                                 
+

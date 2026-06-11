@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useRef, useEffect } from 'react'
 import {
   Chart as ChartJS, CategoryScale, LinearScale,
   PointElement, LineElement, Filler, Tooltip, Legend,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import Sidebar from '@/components/Sidebar'
-import { predictApi, recommendationApi, Alert, OptimizeResult, canOptimize } from '@/api/client'
+import { predictApi, recommendationApi, Alert, OptimizeResult, canOptimize, fopdtConfigApi, TrackingOut } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
 import { useBranding } from '@/branding/BrandingContext'
 import { useMobileNav } from '@/context/MobileNavContext'
@@ -58,6 +58,12 @@ const Dashboard: React.FC = () => {
   const [applyLoading,  setApplyLoading]  = useState(false)
   const [exportLoading, setExportLoading] = useState(false)
 
+  // ── Post-apply FOPDT tracking ──────────────────────────────────────────────
+  const [appliedResultId, setAppliedResultId] = useState<number | null>(null)
+  const [trackingResults, setTrackingResults] = useState<(TrackingOut | null)[]>([])
+  const currentTagsRef = useRef<Record<string, number>>({})
+  const timerIdsRef    = useRef<ReturnType<typeof setTimeout>[]>([])
+
   // ── Staleness & drift ──────────────────────────────────────────────────────
   const age = ageLabel(recommendation?.computed_at)
 
@@ -67,6 +73,37 @@ const Dashboard: React.FC = () => {
   const drift = computeDrift(recommendation?.process_snapshot, currentReadings)
 
   const isStale = age.stale || drift.stale
+
+  // Keep currentTagsRef in sync so timer callbacks always read the live value
+  useEffect(() => {
+    currentTagsRef.current = current?.tags ?? {}
+  }, [current])
+
+  // Start FOPDT tracking timers after apply — fires at each predicted horizon
+  useEffect(() => {
+    if (!applied || !appliedResultId || simulation.length === 0) return
+    timerIdsRef.current.forEach(id => clearTimeout(id))
+    timerIdsRef.current = []
+    setTrackingResults(new Array(simulation.length).fill(null))
+
+    simulation.forEach((step, idx) => {
+      const id = setTimeout(async () => {
+        try {
+          const res = await fopdtConfigApi.checkTracking(appliedResultId, currentTagsRef.current)
+          setTrackingResults(prev => {
+            const updated = [...prev]
+            updated[idx] = res.data
+            return updated
+          })
+        } catch (e) {
+          console.error('Tracking check failed at horizon', step.label, e)
+        }
+      }, step.time_s * 1000)
+      timerIdsRef.current.push(id)
+    })
+
+    return () => { timerIdsRef.current.forEach(id => clearTimeout(id)) }
+  }, [applied, appliedResultId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Optimisation ──────────────────────────────────────────────────────────
   const fetchOptimization = async () => {
@@ -95,9 +132,12 @@ const Dashboard: React.FC = () => {
   const applyRecommendation = async () => {
     if (!recommendation?.result_id) return
     setApplyLoading(true)
+    const rid = recommendation.result_id  // save before we clear it
     try {
-      const res = await recommendationApi.apply(recommendation.result_id)
+      const res = await recommendationApi.apply(rid)
       setApplied(true)
+      setAppliedResultId(rid)
+      setTrackingResults([])
       if (res.data.simulation?.length) {
         setSimulation(res.data.simulation)
       }
@@ -402,7 +442,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
             <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               <div>
                 <div className="font-semibold mb-1">AI Setpoint Advisor</div>
-                <div className="text-xs text-muted">NSGA-II multi-objective optimisation</div>
+            
               </div>
 
               {recommendation ? (
@@ -475,11 +515,50 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                           </div>
 
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                            {simulation.map(s => (
-                              <div key={s.step} style={{
-                                background: 'rgba(0,232,122,0.04)',
+
+                            {/* Top-level recompute banner — shown as soon as any horizon flags deviation */}
+                            {trackingResults.some(tr => tr?.suggest_reoptimize) && (
+                              <div style={{
+                                padding: '0.6rem 0.75rem',
+                                background: 'rgba(251,113,133,0.08)',
+                                border: '1px solid rgba(251,113,133,0.35)',
                                 borderRadius: 6,
-                                border: '1px solid rgba(0,232,122,0.12)',
+                              }}>
+                                <div style={{ fontSize: '0.74rem', color: '#F87171', fontWeight: 700, marginBottom: '0.25rem' }}>
+                                  ⚠ Process deviation detected — recomputation recommended
+                                </div>
+                                <div style={{ fontSize: '0.67rem', color: 'var(--text-low)', marginBottom: '0.4rem' }}>
+                                  {trackingResults.find(tr => tr?.suggest_reoptimize)?.message}
+                                </div>
+                                <button
+                                  className="btn btn-sm"
+                                  style={{
+                                    background: 'rgba(251,113,133,0.12)',
+                                    border: '1px solid rgba(251,113,133,0.4)',
+                                    color: '#F87171', fontSize: '0.74rem', padding: '0.25rem 0.6rem',
+                                  }}
+                                  onClick={fetchOptimization}
+                                >
+                                  ⟳ Recompute with current conditions
+                                </button>
+                              </div>
+                            )}
+
+                            {simulation.map((s, idx) => {
+                              const tr = trackingResults[idx]
+                              return (
+                              <div key={s.step} style={{
+                                background: tr
+                                  ? tr.tracking_ok
+                                    ? 'rgba(0,232,122,0.06)'
+                                    : 'rgba(251,113,133,0.06)'
+                                  : 'rgba(0,232,122,0.04)',
+                                borderRadius: 6,
+                                border: tr
+                                  ? tr.tracking_ok
+                                    ? '1px solid rgba(0,232,122,0.25)'
+                                    : '1px solid rgba(251,113,133,0.35)'
+                                  : '1px solid rgba(0,232,122,0.12)',
                                 padding: '0.5rem 0.6rem',
                               }}>
                                 {/* Time label + KPIs */}
@@ -530,6 +609,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                     display: 'flex', flexWrap: 'wrap', gap: '0.3rem',
                                     borderTop: '1px solid rgba(255,255,255,0.05)',
                                     paddingTop: '0.3rem',
+                                    marginBottom: tr ? '0.35rem' : 0,
                                   }}>
                                     {Object.entries(s.tag_values)
                                       .filter(([tag]) => !tag.endsWith('.OP'))
@@ -554,9 +634,49 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                     </span>
                                   </div>
                                 )}
+
+                                {/* Auto tracking result — populated by timer at this horizon */}
+                                {tr && (
+                                  <div style={{
+                                    borderTop: '1px solid rgba(255,255,255,0.06)',
+                                    paddingTop: '0.3rem',
+                                    display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap',
+                                  }}>
+                                    {tr.tracking_ok ? (
+                                      <span style={{ fontSize: '0.67rem', color: 'var(--success)' }}>
+                                        ✓ DCS tracking · max deviation {tr.worst_deviation_pct.toFixed(1)}%
+                                      </span>
+                                    ) : (
+                                      <>
+                                        <span style={{ fontSize: '0.67rem', color: '#F87171' }}>
+                                          ⚠ {tr.worst_deviation_pct.toFixed(1)}% deviation
+                                          {Object.keys(tr.deviations).length > 0 && (
+                                            <> on {Object.keys(tr.deviations).join(', ')}</>
+                                          )}
+                                        </span>
+                                        {tr.suggest_reoptimize && (
+                                          <button
+                                            className="btn btn-sm"
+                                            style={{
+                                              fontSize: '0.63rem', padding: '0.1rem 0.4rem',
+                                              background: 'rgba(251,113,133,0.1)',
+                                              border: '1px solid rgba(251,113,133,0.35)',
+                                              color: '#F87171',
+                                            }}
+                                            onClick={fetchOptimization}
+                                          >
+                                            ⟳ Recompute
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                )}
                               </div>
-                            ))}
+                              )
+                            })}
                           </div>
+
 
                           <div style={{
                             fontSize: '0.62rem', color: 'var(--text-low)', marginTop: '0.5rem',

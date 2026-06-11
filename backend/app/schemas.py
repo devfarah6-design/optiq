@@ -326,7 +326,12 @@ class SetpointEntry(BaseModel):
 
 class SetpointConfigOut(BaseModel):
     column_tag: str
-    setpoints:  Lis
+    setpoints:  List[SetpointEntry]
+
+
+class SetpointConfigUpdate(BaseModel):
+    setpoints: List[SetpointEntry]
+
 
 # -- FOPDT Process Dynamics (admin-configurable) ------------------------------
 class FopdtEntry(BaseModel):

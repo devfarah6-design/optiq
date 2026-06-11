@@ -51,7 +51,7 @@ const Dashboard: React.FC = () => {
   const { user }       = useAuth()
   const { company }    = useBranding()
   const { toggle: toggleSidebar } = useMobileNav()
-  const [current,        setCurrent]        = useState<Prediction | null>(null)
+  const [current,        setCurrent]        = useState<(Prediction & { readings?: number[]; tags?: Record<string, number> }) | null>(null)
   const [history,        setHistory]        = useState<DataPoint[]>([])
   const [alerts,         setAlerts]         = useState<Alert[]>([])
   const [recommendation, setRecommendation] = useState<OptimizeResult | null>(null)

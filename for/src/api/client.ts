@@ -102,6 +102,14 @@ export const columnApi = {
   delete: (id: number) => api.delete(`/columns/${id}`),
 }
 
+// ── Setpoint Config ───────────────────────────────────────────────────────────
+export const spConfigApi = {
+  get:    (column_tag = 'DC4') =>
+    api.get<SetpointConfigOut>(`/config/setpoints?column_tag=${column_tag}`),
+  update: (setpoints: SetpointEntry[], column_tag = 'DC4') =>
+    api.put<SetpointConfigOut>(`/config/setpoints?column_tag=${column_tag}`, { setpoints }),
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const statsApi = {
   get: (column_tag = 'DC4', period_hours = 24) =>
@@ -147,6 +155,21 @@ export interface Prediction {
   tags?:         Record<string, number>
 }
 
+export interface SetpointEntry {
+  tag:          string
+  desc:         string
+  unit:         string
+  nominal:      number
+  lo:           number
+  hi:           number
+  recommended:  number | null
+}
+
+export interface SetpointConfigOut {
+  column_tag: string
+  setpoints:  SetpointEntry[]
+}
+
 export interface OptimizeResult {
   result_id?:                  number
   current_setpoints:           number[]
@@ -164,6 +187,7 @@ export interface OptimizeResult {
   feasibility_score:           number
   computed_at?:                string
   process_snapshot?:           Record<string, number>
+  sp_config?:                  SetpointEntry[]
 }
 
 export interface OptimizationRecord {

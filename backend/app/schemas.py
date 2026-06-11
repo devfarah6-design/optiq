@@ -90,6 +90,7 @@ class OptimizeOut(BaseModel):
     feasibility_score:           float
     computed_at:                 Optional[datetime] = None
     process_snapshot:            Optional[Dict[str, float]] = None
+    sp_config:                   Optional[List[Dict[str, Any]]] = None  # admin SP config attached
 
 
 # ── Apply recommendation ──────────────────────────────────────────────────────
@@ -309,22 +310,24 @@ class StatsOut(BaseModel):
     critical_alerts:     int
 
 
-# ── Pareto (legacy) ───────────────────────────────────────────────────────────
-class ParetoSolution(BaseModel):
-    setpoints: List[float]
-    energy:    float
-    purity:    float
-    butane:    float = 0.0
-    gain:      float
+# ── Setpoint Config (admin-customisable SP values) ───────────────────────────
+class SetpointEntry(BaseModel):
+    tag:         str
+    desc:        str   = ""
+    unit:        str   = ""
+    nominal:     float = 0.0
+    lo:          float = 0.0
+    hi:          float = 0.0
+    recommended: Optional[float] = None   # admin-set recommended value
 
 
-class ParetoOut(BaseModel):
-    solutions:  List[ParetoSolution]
-    best_index: int
+class SetpointConfigOut(BaseModel):
+    column_tag: str
+    setpoints:  List[SetpointEntry]
 
 
-# ── App Config ────────────────────────────────────────────────────────────────
-class ConfigSet(BaseModel):
-    key:   str
-    value: Any
+class SetpointConfigUpdate(BaseModel):
+    setpoints: List[SetpointEntry]
 
+
+# ── Pareto (legacy) ────

@@ -6,8 +6,8 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { adminApi, authApi, siteApi, columnApi } from '@/api/client'
-import type { Company, CompanyCreate, Site, SiteCreate, DistillationColumn, ColumnCreate } from '@/api/client'
+import { adminApi, authApi, siteApi, columnApi, spConfigApi } from '@/api/client'
+import type { Company, CompanyCreate, Site, SiteCreate, DistillationColumn, ColumnCreate, SetpointEntry } from '@/api/client'
 import { useBranding } from '@/branding/BrandingContext'
 import { useAuth } from '@/auth/AuthContext'
 import { isAdmin } from '@/api/client'
@@ -23,7 +23,7 @@ const SECTOR_PALETTES: Record<string, { primary: string; accent: string; bg: str
   'Other':           { primary: '#A78BFA', accent: '#60A5FA', bg: '#12101A' },
 }
 
-type Tab = 'companies' | 'sites' | 'columns' | 'users' | 'config'
+type Tab = 'companies' | 'sites' | 'columns' | 'users' | 'config' | 'setpoints'
 
 const Admin: React.FC = () => {
   const { user }            = useAuth()
@@ -73,7 +73,8 @@ const Admin: React.FC = () => {
     { id: 'sites',     label: '🏭 Sites' },
     { id: 'columns',   label: '🔧 Columns' },
     { id: 'users',     label: '👤 Users' },
-    { id: 'config',    label: '⚙️ Config' },
+    { id: 'config',     label: '⚙️ Config' },
+    { id: 'setpoints',  label: '🎯 Setpoints' },
   ].filter(t => !t.adminOnly || systemAdmin)
 
   return (
@@ -162,6 +163,9 @@ const Admin: React.FC = () => {
               )}
               {tab === 'config' && (
                 <ConfigTab cfg={cfg} setCfg={setCfg} showToast={showToast} />
+              )}
+              {tab === 'setpoints' && (
+                <SetpointsTab showToast={showToast} />
               )}
             </>
           )}
@@ -975,5 +979,136 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
     {children}
   </div>
 )
+
+// SETPOINTS TAB
+// ───────────────────────────────────────────────────────────────────────────────
+const SetpointsTab: React.FC<{
+  showToast: (msg: string, ok?: boolean) => void
+}> = ({ showToast }) => {
+  const { primary } = useBranding()
+  const [columnTag, setColumnTag] = useState('DC4')
+  const [setpoints, setSetpoints] = useState<SetpointEntry[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [saving, setSaving]       = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await spConfigApi.get(columnTag)
+      setSetpoints(res.data.setpoints)
+    } catch {
+      showToast('Failed to load setpoint config', false)
+    } finally {
+      setLoading(false)
+    }
+  }, [columnTag, showToast])
+
+  useEffect(() => { load() }, [load])
+
+  const update = (i: number, field: keyof SetpointEntry, raw: string) => {
+    setSetpoints(prev => {
+      const next = [...prev]
+      const val  = parseFloat(raw)
+      next[i] = { ...next[i], [field]: isNaN(val) ? raw : val } as SetpointEntry
+      return next
+    })
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await spConfigApi.update(setpoints, columnTag)
+      showToast('Setpoint config saved', true)
+    } catch {
+      showToast('Save failed', false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const inputStyle: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 4,
+    color: 'var(--text)',
+    padding: '0.25rem 0.4rem',
+    fontSize: '0.78rem',
+    width: '100%',
+  }
+
+  return (
+    <section>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 700, color: primary, margin: 0 }}>
+          🎯 SP Setpoint Config
+        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-low)' }}>
+          Column:
+          <input
+            value={columnTag}
+            onChange={e => setColumnTag(e.target.value.toUpperCase())}
+            style={{ ...inputStyle, width: 80 }}
+          />
+        </div>
+        <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-low)', flex: 1 }}>
+          Configure the SP setpoints displayed alongside OP recommendations on the dashboard.
+          Changes apply company-wide for the selected column.
+        </p>
+      </div>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-low)', fontSize: '0.85rem', padding: '1rem 0' }}>Loading…</div>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+              <thead>
+                <tr style={{ color: 'var(--text-low)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  {['Tag', 'Description', 'Unit', 'Nominal', 'Lo', 'Hi', 'Recommended'].map(h => (
+                    <th key={h} style={{ padding: '0.4rem 0.6rem', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {setpoints.map((sp, i) => (
+                  <tr key={sp.tag} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '0.4rem 0.6rem', fontFamily: 'var(--font-mono)', color: primary, whiteSpace: 'nowrap' }}>{sp.tag}</td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input value={sp.desc}    onChange={e => update(i, 'desc',        e.target.value)} style={inputStyle} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input value={sp.unit}    onChange={e => update(i, 'unit',        e.target.value)} style={{ ...inputStyle, width: 60 }} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input type="number" value={sp.nominal}     onChange={e => update(i, 'nominal',     e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input type="number" value={sp.lo}          onChange={e => update(i, 'lo',          e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input type="number" value={sp.hi}          onChange={e => update(i, 'hi',          e.target.value)} style={{ ...inputStyle, width: 80 }} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.6rem' }}>
+                      <input type="number" value={sp.recommended ?? ''} onChange={e => update(i, 'recommended', e.target.value)} style={{ ...inputStyle, width: 90, color: 'var(--accent)' }} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : '💾 Save Setpoints'}
+            </button>
+            <button className="btn" onClick={load} disabled={loading} style={{ opacity: 0.7 }}>
+              ↺ Reset
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
 
 export default Admin

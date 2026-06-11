@@ -578,6 +578,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     <Metric label="Best found"     value={recommendation.expected_energy.toFixed(4)} />
                   </div>
 
+                  {/* ── OP setpoints ── */}
                   <div className="text-xs text-muted">Recommended OP setpoints</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: primary, lineHeight: 1.8 }}>
                     {[
@@ -594,6 +595,30 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       )
                     ))}
                   </div>
+
+                  {/* ── SP setpoints (admin-configured) ── */}
+                  {recommendation.sp_config && recommendation.sp_config.length > 0 && (
+                    <>
+                      <div className="text-xs text-muted" style={{ marginTop: '0.5rem' }}>
+                        Recommended SP setpoints
+                      </div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--accent)', lineHeight: 1.8 }}>
+                        {recommendation.sp_config.map(sp => (
+                          sp.recommended != null && (
+                            <div key={sp.tag}>
+                              <span style={{ color: 'var(--text-low)', fontSize: '0.7rem' }}>
+                                {sp.desc || sp.tag}{' '}
+                              </span>
+                              <span>
+                                {sp.recommended.toFixed(sp.unit === '°C' ? 1 : 0)}
+                                {' '}{sp.unit}
+                              </span>
+                            </div>
+                          )
+                        ))}
+                      </div>
+                    </>
+                  )}
 
                   {/* Apply button */}
                   {recommendation.result_id && canOptimize(user) && !applied && (

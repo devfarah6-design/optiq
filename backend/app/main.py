@@ -637,6 +637,7 @@ def optimise(
         feasibility_score          = result.feasibility_score,
         computed_at                = opt_record.requested_at,
         process_snapshot           = snapshot,
+        sp_config                  = _get_sp_config(data.column_tag, db),
     )
 
 
@@ -852,6 +853,63 @@ def delete_company(
                 detail={"company_id": company_id},
                 ip=request.client.host if request.client else None, status_code=204)
     return None
+
+
+# ── Setpoint Config (admin-customisable SP values) ────────────────────────────
+# Default DC4 setpoints derived from process notebook (3 engineer-facing SPs)
+_DEFAULT_SP_CONFIG = [
+    {"tag": "2FI422.SP",   "desc": "Steam flow setpoint",         "unit": "kg/h", "nominal": 3000.0, "lo": 1500.0, "hi": 4500.0, "recommended": 2801.0},
+    {"tag": "2TI1_414.SP", "desc": "Reflux temperature setpoint", "unit": "°C",   "nominal": 74.0,   "lo": 65.0,   "hi": 82.0,   "recommended": 72.2},
+    {"tag": "2TIC403.SP",  "desc": "Bottom temperature setpoint", "unit": "°C",   "nominal": 94.0,   "lo": 88.0,   "hi": 100.0,  "recommended": 94.1},
+]
+
+
+def _get_sp_config(column_tag: str, db: Session) -> list:
+    col = db.query(models.DistillationColumn).filter(
+        models.DistillationColumn.tag == column_tag,
+        models.DistillationColumn.is_active == True,
+    ).first()
+    if col and col.config and "sp_config" in col.config:
+        return col.config["sp_config"]
+    return _DEFAULT_SP_CONFIG
+
+
+@app.get("/config/setpoints", response_model=schemas.SetpointConfigOut, tags=["config"])
+def get_setpoint_config(
+    column_tag: str = "DC4",
+    db: Session = Depends(dependencies.get_db),
+    _current_user=Depends(dependencies.get_current_user),
+):
+    """Return SP config for the given column. Falls back to hard-coded DC4 defaults."""
+    return schemas.SetpointConfigOut(
+        column_tag=column_tag,
+        setpoints=_get_sp_config(column_tag, db),
+    )
+
+
+@app.put("/config/setpoints", response_model=schemas.SetpointConfigOut, tags=["config"])
+def update_setpoint_config(
+    request:    Request,
+    data:       schemas.SetpointConfigUpdate,
+    column_tag: str = "DC4",
+    db:         Session = Depends(dependencies.get_db),
+    current_user=Depends(dependencies.require_company_admin),
+):
+    """Company admin: update the SP config stored in DistillationColumn.config."""
+    col = db.query(models.DistillationColumn).filter(
+        models.DistillationColumn.tag == column_tag
+    ).first()
+    new_sp = [s.model_dump() for s in data.setpoints]
+    if col:
+        existing = dict(col.config or {})
+        existing["sp_config"] = new_sp
+        col.config = existing
+        db.commit()
+    write_audit(db, "UPDATE_SP_CONFIG", user=current_user,
+                endpoint=f"PUT /config/setpoints?column_tag={column_tag}",
+                detail={"column_tag": column_tag, "n_setpoints": len(new_sp)},
+                ip=request.client.host if request.client else None, status_code=200)
+    return schemas.SetpointConfigOut(column_tag=column_tag, setpoints=data.setpoints)
 
 
 # ── Admin Config ───────────────────────────────────────────────────────────────
@@ -1084,64 +1142,4 @@ def get_stats(
     from sqlalchemy import func
     cutoff = datetime.now(timezone.utc) - timedelta(hours=period_hours)
 
-    pred_q = db.query(models.Prediction).filter(
-        models.Prediction.column_tag == column_tag,
-        models.Prediction.timestamp >= cutoff,
-    )
-    total_pred = pred_q.count()
-
-    agg = pred_q.with_entities(
-        func.avg(models.Prediction.energy).label("avg_e"),
-        func.min(models.Prediction.energy).label("min_e"),
-        func.max(models.Prediction.energy).label("max_e"),
-        func.avg(models.Prediction.purity).label("avg_p"),
-        func.min(models.Prediction.purity).label("min_p"),
-        func.max(models.Prediction.purity).label("max_p"),
-    ).first()
-
-    opt_q = db.query(models.OptimizationResult).filter(
-        models.OptimizationResult.column_tag == column_tag,
-        models.OptimizationResult.requested_at >= cutoff,
-    )
-    total_opt = opt_q.count()
-    total_applied = opt_q.filter(models.OptimizationResult.applied == True).count()
-
-    # Average energy saving from applied recs
-    applied_recs = opt_q.filter(models.OptimizationResult.applied == True).all()
-    avg_saving = 0.0
-    if applied_recs:
-        savings = [r.energy_savings_pct for r in applied_recs if r.energy_savings_pct is not None]
-        avg_saving = sum(savings) / len(savings) if savings else 0.0
-
-    alert_q = db.query(models.Alert).filter(models.Alert.timestamp >= cutoff)
-    total_alerts = alert_q.count()
-    critical_alerts = alert_q.filter(models.Alert.severity == models.AlertSeverity.CRITICAL).count()
-
-    def safe(v, default=0.0):
-        return float(v) if v is not None else default
-
-    return schemas.StatsOut(
-        column_tag=column_tag,
-        period_hours=period_hours,
-        total_predictions=total_pred,
-        avg_energy=safe(agg.avg_e if agg else None),
-        min_energy=safe(agg.min_e if agg else None),
-        max_energy=safe(agg.max_e if agg else None),
-        avg_purity=safe(agg.avg_p if agg else None),
-        min_purity=safe(agg.min_p if agg else None),
-        max_purity=safe(agg.max_p if agg else None),
-        total_optimizations=total_opt,
-        total_applied=total_applied,
-        avg_energy_saving=avg_saving,
-        total_alerts=total_alerts,
-        critical_alerts=critical_alerts,
-    )
-
-
-# ── Branding ───────────────────────────────────────────────────────────────────
-@app.get("/branding/{slug}", response_model=schemas.CompanyOut, tags=["branding"])
-def get_branding(slug: str, db: Session = Depends(dependencies.get_db)):
-    company = db.query(models.Company).filter_by(slug=slug, is_active=True).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-    return company
+    pred_q = d

@@ -613,25 +613,60 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                   }}>
                                     {Object.entries(s.tag_values)
                                       .filter(([tag]) => !tag.endsWith('.OP'))
-                                      .map(([tag, val]) => (
-                                        <span key={tag} style={{
-                                          fontSize: '0.63rem',
-                                          fontFamily: 'var(--font-mono)',
-                                          color: 'var(--text-low)',
-                                          background: 'rgba(255,255,255,0.04)',
-                                          borderRadius: 3,
-                                          padding: '0.1rem 0.3rem',
-                                        }}>
-                                          <span style={{ color: 'var(--accent)' }}>{tag}</span>
-                                          {' '}{typeof val === 'number' ? val.toFixed(1) : val}
-                                        </span>
-                                      ))}
-                                    <span style={{
-                                      fontSize: '0.6rem', color: 'var(--text-low)',
-                                      alignSelf: 'center', fontStyle: 'italic',
-                                    }}>
-                                      verify on DCS
-                                    </span>
+                                      .map(([tag, val]) => {
+                                        const dev = tr?.deviations?.[tag] as
+                                          { predicted: number; actual: number; deviation_pct: number; unit: string } | undefined
+                                        return (
+                                          <span key={tag} style={{
+                                            fontSize: '0.63rem',
+                                            fontFamily: 'var(--font-mono)',
+                                            color: 'var(--text-low)',
+                                            background: dev
+                                              ? dev.deviation_pct > 5
+                                                ? 'rgba(251,113,133,0.1)'
+                                                : 'rgba(0,232,122,0.08)'
+                                              : 'rgba(255,255,255,0.04)',
+                                            borderRadius: 3,
+                                            padding: '0.1rem 0.3rem',
+                                          }}>
+                                            <span style={{ color: 'var(--accent)' }}>{tag}</span>
+                                            {' '}
+                                            {dev ? (
+                                              <>
+                                                <span style={{
+                                                  color: 'var(--text-low)',
+                                                  textDecoration: 'line-through',
+                                                  fontSize: '0.58rem',
+                                                }}>
+                                                  {(typeof val === 'number' ? val : 0).toFixed(1)}
+                                                </span>
+                                                {' '}
+                                                <span style={{
+                                                  color: dev.deviation_pct > 5 ? '#F87171' : 'var(--success)',
+                                                  fontWeight: 700,
+                                                }}>
+                                                  {dev.actual.toFixed(1)}
+                                                </span>
+                                                {dev.unit && (
+                                                  <span style={{ color: 'var(--text-low)', fontSize: '0.57rem' }}>
+                                                    {' '}{dev.unit}
+                                                  </span>
+                                                )}
+                                              </>
+                                            ) : (
+                                              typeof val === 'number' ? val.toFixed(1) : val
+                                            )}
+                                          </span>
+                                        )
+                                      })}
+                                    {!tr && (
+                                      <span style={{
+                                        fontSize: '0.6rem', color: 'var(--text-low)',
+                                        alignSelf: 'center', fontStyle: 'italic',
+                                      }}>
+                                        verify on DCS
+                                      </span>
+                                    )}
                                   </div>
                                 )}
 
@@ -795,7 +830,10 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                 title={!canOptimize(user) ? 'Viewer role — read-only' : undefined}>
                 {optLoading
                   ? <><div className="spinner" style={{ width: 14, height: 14 }} /> Computing…</>
-                  : isStale && recommendation ? '⚠ Recompute (conditions changed)' : '⚡ Update Recommendation'
+                  : (applied
+                      ? trackingResults.some(tr => tr?.suggest_reoptimize)
+                      : isStale && !!recommendation)
+                    ? '⚠ Recompute (conditions changed)' : '⚡ Update Recommendation'
                 }
               </button>
             </div>
@@ -816,8 +854,6 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
               ? <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-low)', fontSize: '0.875rem' }}>
                   ✓ No alerts detected
                 </div>
-              : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 380, overflowY: 'auto' }}>
-                  {alerts.slice(0, 15).map(a => <AlertRow key={a.id} alert={a} />)}
                 </div>
             }
           </div>

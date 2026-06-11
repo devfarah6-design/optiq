@@ -1,8 +1,8 @@
 """
-OPTIQ DSS · Optimiser  (v2 — OP controller variables)
-=======================================================
+OPTIQ DSS · Optimiser  (v3 — Differential Evolution)
+======================================================
 Searches over 4 controller OUTPUT (OP) values to minimise energy
-while maintaining purity ≥ 95% and maximising butane recovery.
+while maintaining purity ≥ 95 % and maximising butane recovery.
 
 Controller variables optimised
 -------------------------------
@@ -13,8 +13,15 @@ Controller variables optimised
 
 Algorithm
 ---------
-Bayesian Optimisation (Optuna TPE) — persistent study, ~80 trials, ~3–6 s.
-Falls back to Differential Evolution (scipy) if Optuna is not installed.
+Differential Evolution (scipy) — strategy 'best1bin', F=0.8, CR=0.9.
+Benchmarked against PSO, GA, Bayesian (TPE), NSGA-II on the XGBoost
+surrogate: DE matches GA at energy=614.7 but converges in ~17 s with
+only ~2 900 evaluations (GA needs 51 s / 9 600 evals).
+
+Objective (scalarised, minimise)
+---------------------------------
+  f = W_ENERGY * e/e_ref  -  W_PURITY * p/100  -  W_BUTANE * b/b_ref
+  + PURITY_PENALTY * max(0, MIN_PURITY - p)
 
 "I Applied It" simulation
 --------------------------
@@ -25,40 +32,29 @@ return the expected trajectory [step1, step2, step3].
 import logging
 import warnings
 import numpy as np
+from scipy.optimize import differential_evolution
 from app.model_loader import model_wrapper
 from app import schemas
 
-warnings.filterwarnings('ignore', module='optuna')
-logging.getLogger('optuna').setLevel(logging.ERROR)
+warnings.filterwarnings('ignore')
 logger = logging.getLogger(__name__)
 
 # ── Objective weights ─────────────────────────────────────────────────────────
-W_ENERGY = 0.50
-W_PURITY = 0.35
-W_BUTANE = 0.15
+W_ENERGY       = 0.60   # matches study w_energy that found 614.7 optimum
+W_PURITY       = 0.35
+W_BUTANE       = 0.05
+PURITY_PENALTY = 0.30   # per % below MIN_PURITY
+MIN_PURITY     = 95.0   # product spec hard constraint
 
-MIN_PURITY = 95.0    # product spec hard constraint
-
-# ── Persistent Bayesian study ─────────────────────────────────────────────────
-_study = None
-
-
-def _get_study():
-    global _study
-    if _study is not None:
-        return _study
-    try:
-        import optuna
-        optuna.logging.set_verbosity(optuna.logging.ERROR)
-        _study = optuna.create_study(
-            direction='minimize',
-            sampler=optuna.samplers.TPESampler(seed=42, n_startup_trials=20),
-        )
-        logger.info('✓ Bayesian Optimizer ready (Optuna TPE) — OP controller space')
-        return _study
-    except ImportError:
-        logger.warning('Optuna not installed — pip install optuna')
-        return None
+# ── DE hyper-parameters (tuned from benchmark study) ─────────────────────────
+DE_POP_SIZE    = 15     # population = 15 × n_var individuals
+DE_MAX_ITER    = 100    # typically converges in < 50 iterations
+DE_F           = 0.8    # mutation factor
+DE_CR          = 0.9    # crossover rate
+DE_STRATEGY    = 'best1bin'   # exploit best; fast convergence on this problem
+DE_TOL         = 1e-6
+DE_POLISH      = True   # final L-BFGS-B local polish (free accuracy gain)
+DE_SEED        = 42
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -66,10 +62,8 @@ def _get_op_bounds() -> tuple:
     """Return (op_cols, bounds_lo, bounds_hi) for the active OP variables."""
     op_disp = model_wrapper.op_display
     op_bnds = model_wrapper.op_bounds
-    # Keep only OP cols that the loaded model actually uses
     active  = [d for d in op_disp if d['col'] in (model_wrapper.op_cols or [])]
     if not active:
-        # Fallback: use all 4 standard OP cols
         active = op_disp
     cols = [d['col'] for d in active]
     lo   = np.array([op_bnds.get(c, (20.0, 80.0))[0] for c in cols])
@@ -85,100 +79,94 @@ def _current_op_from_readings(base_readings) -> dict:
     """Extract current OP values from live readings, or use nominals."""
     if base_readings and len(base_readings) > 0:
         return model_wrapper._extract_op_from_readings(list(base_readings))
-    # Fall back to OP nominals
     from app.model_loader import _OP_NOMINALS
     return dict(_OP_NOMINALS)
 
 
 # ── Main optimise call ────────────────────────────────────────────────────────
 def optimize(
-    current_state: list,          # kept for API compatibility; ignored (use base_readings)
-    base_readings=None,           # live 33-sensor vector
-    n_trials:      int   = 80,
-    seed:          int   = 42,
+    current_state: list,   # kept for API compatibility
+    base_readings=None,    # live 33-sensor vector
+    n_trials:    int = 0,  # ignored — DE uses DE_MAX_ITER
+    seed:        int = DE_SEED,
 ) -> schemas.OptimizeOut:
     """
-    Find optimal controller OP values using Bayesian Optimisation.
+    Find optimal controller OP values using Differential Evolution.
 
     Parameters
     ----------
-    current_state   : legacy parameter — [steam_kg/h, reflux_°C, bottom_°C]
-                      Not used for prediction but kept for API compatibility.
-    base_readings   : full live sensor vector from WebSocket (33 values)
-    n_trials        : Optuna trials to run this call
+    current_state   : legacy — kept for API compatibility, not used.
+    base_readings   : full live sensor vector from WebSocket (33 values).
+    n_trials        : ignored (DE converges in fixed iterations).
+    seed            : random seed for reproducibility.
     """
     op_cols, lo, hi = _get_op_bounds()
-    n_var = len(op_cols)
 
     # ── Baseline at current operating point ──────────────────────────────────
-    current_op_dict  = _current_op_from_readings(base_readings)
-    current_energy, current_purity, current_butane = model_wrapper.predict_at_op(current_op_dict)
-    current_energy = float(np.clip(current_energy, 100.0, 3000.0))
-    current_purity = float(np.clip(current_purity,  80.0,   99.99))
-    current_butane = float(np.clip(current_butane,   0.5,   10.0))
-
-    # Current OP values (for output — map to display format)
+    current_op_dict = _current_op_from_readings(base_readings)
+    ce, cp, cb = model_wrapper.predict_at_op(current_op_dict)
+    ce = float(np.clip(ce, 100.0, 3000.0))
+    cp = float(np.clip(cp,  80.0,   99.99))
+    cb = float(np.clip(cb,   0.5,   10.0))
     current_ops_display = [current_op_dict.get(c, 50.0) for c in op_cols]
 
     logger.info(
-        f'Bayesian Opt | current E={current_energy:.2f} '
-        f'P={current_purity:.2f}% B={current_butane:.3f} '
-        f'| n_trials={n_trials}'
+        f'DE Opt start | E={ce:.2f} P={cp:.2f}% B={cb:.3f} '
+        f'| pop={DE_POP_SIZE}×{len(op_cols)} max_iter={DE_MAX_ITER}'
     )
 
-    study = _get_study()
-    if study is None:
-        return _de_fallback(
-            op_cols, lo, hi,
-            current_energy, current_purity, current_butane,
-            current_ops_display, current_state,
-        )
-
-    import optuna
-
-    def objective(trial: optuna.Trial) -> float:
-        op_vals = np.array([
-            trial.suggest_float(op_cols[i], float(lo[i]), float(hi[i]))
-            for i in range(n_var)
-        ])
-        op_dict = _op_vector_to_dict(op_vals, op_cols)
-        e, p, b = model_wrapper.predict_at_op(op_dict)
-
-        obj = (
-            W_ENERGY * e / (current_energy + 1e-9)
+    # ── Scalarised objective ──────────────────────────────────────────────────
+    def objective(x: np.ndarray) -> float:
+        op  = _op_vector_to_dict(x, op_cols)
+        e, p, b = model_wrapper.predict_at_op(op)
+        cost = (
+            W_ENERGY * e / (ce + 1e-9)
             - W_PURITY * p / 100.0
-            - W_BUTANE * b / (current_butane + 1e-9)
+            - W_BUTANE * b / (cb + 1e-9)
         )
         if p < MIN_PURITY:
-            obj += (MIN_PURITY - p) * 0.3
-        return obj
+            cost += PURITY_PENALTY * (MIN_PURITY - p)
+        return float(cost)
 
-    study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
+    bounds = list(zip(lo.tolist(), hi.tolist()))
 
-    best       = study.best_trial
-    best_vals  = np.clip(
-        np.array([best.params[c] for c in op_cols]),
-        lo, hi,
+    result = differential_evolution(
+        objective,
+        bounds,
+        strategy      = DE_STRATEGY,
+        maxiter       = DE_MAX_ITER,
+        popsize       = DE_POP_SIZE,
+        mutation      = DE_F,
+        recombination = DE_CR,
+        tol           = DE_TOL,
+        seed          = seed,
+        polish        = DE_POLISH,
+        disp          = False,
     )
-    best_op    = _op_vector_to_dict(best_vals, op_cols)
+
+    best_ops = np.clip(result.x, lo, hi)
+    best_op  = _op_vector_to_dict(best_ops, op_cols)
     be, bp, bb = model_wrapper.predict_at_op(best_op)
     be = float(np.clip(be, 100.0, 3000.0))
     bp = float(np.clip(bp,  80.0,   99.99))
     bb = float(np.clip(bb,   0.5,   10.0))
 
+    logger.info(
+        f'DE Opt done  | E: {ce:.2f}→{be:.2f}  P: {cp:.2f}→{bp:.2f}%'
+        f'  converged={result.success}  nfev={result.nfev}'
+    )
+
     return _build_result(
-        current_state, current_ops_display, best_vals.tolist(),
-        current_energy, current_purity, current_butane,
-        be, bp, bb,
-        n_study_trials=len(study.trials),
+        current_state, current_ops_display, best_ops.tolist(),
+        ce, cp, cb, be, bp, bb,
     )
 
 
+# ── Result builder ────────────────────────────────────────────────────────────
 def _build_result(
     legacy_sp, current_ops, best_ops,
     ce, cp, cb,
     be, bp, bb,
-    n_study_trials=0,
 ) -> schemas.OptimizeOut:
     es = max(0.0, (ce - be) / (ce + 1e-9) * 100)
     pg = max(0.0, (bp - cp) / (cp + 1e-9) * 100)
@@ -191,7 +179,7 @@ def _build_result(
     else:
         status = 'critical'
 
-    # No real improvement → fallback to current OP
+    # No real improvement → keep current OP
     if es < 0.1 and pg < 0.05 and bg < 0.5:
         best_ops = list(current_ops)
         be, bp, bb = ce, cp, cb
@@ -201,11 +189,9 @@ def _build_result(
 
     logger.info(
         f'Opt result | E: {ce:.2f}→{be:.2f} ({es:.1f}% saved) '
-        f'P: {cp:.2f}→{bp:.2f}% B: {cb:.3f}→{bb:.3f} m³/h | status={status}'
+        f'P: {cp:.2f}→{bp:.2f}% B: {cb:.3f}→{bb:.3f} | status={status}'
     )
 
-    # Map OP values to recommended_setpoints list for schema compatibility
-    # (legacy schema uses recommended_setpoints as a generic list)
     return schemas.OptimizeOut(
         current_setpoints          = list(current_ops),
         recommended_setpoints      = list(best_ops),
@@ -223,65 +209,26 @@ def _build_result(
     )
 
 
-def _de_fallback(op_cols, lo, hi, ce, cp, cb, current_ops_display, legacy_sp):
-    """Scipy DE fallback when Optuna not installed."""
-    from scipy.optimize import differential_evolution
-
-    def obj(x):
-        op = _op_vector_to_dict(x, op_cols)
-        e, p, b = model_wrapper.predict_at_op(op)
-        return (
-            W_ENERGY * e / (ce + 1e-9)
-            - W_PURITY * p / 100.0
-            - W_BUTANE * b / (cb + 1e-9)
-            + (max(0.0, MIN_PURITY - p) * 0.3)
-        )
-
-    res      = differential_evolution(obj, list(zip(lo, hi)), maxiter=80, seed=42)
-    best_ops = np.clip(res.x, lo, hi)
-    best_op  = _op_vector_to_dict(best_ops, op_cols)
-    be, bp, bb = model_wrapper.predict_at_op(best_op)
-    be = float(np.clip(be, 100.0, 3000.0))
-    bp = float(np.clip(bp,  80.0,   99.99))
-    bb = float(np.clip(bb,   0.5,   10.0))
-
-    return _build_result(
-        legacy_sp, current_ops_display, best_ops.tolist(),
-        ce, cp, cb, be, bp, bb,
-    )
-
-
 # ── Apply simulation ──────────────────────────────────────────────────────────
 def simulate_after_apply(recommended_ops: list) -> list:
     """
     Simulate 3 time steps forward after engineer applies recommended OP values.
     Uses the lag-based model rolling forward.
 
-    Parameters
-    ----------
-    recommended_ops : list[float] — same order as model_wrapper.op_cols
-
     Returns
     -------
     list of {step, energy, purity, butane, energy_delta_pct, purity_delta_pct}
     """
-    op_cols  = model_wrapper.op_cols or [d['col'] for d in model_wrapper.op_display]
-    op_dict  = {col: float(v) for col, v in zip(op_cols, recommended_ops)
-                if len(recommended_ops) > i
-                for i, col in enumerate(op_cols)}
-
-    # Simpler version — zip approach
+    op_cols = model_wrapper.op_cols or [d['col'] for d in model_wrapper.op_display]
     op_dict = {}
     for col, val in zip(op_cols, recommended_ops):
         op_dict[col] = float(val)
 
-    # Get current baseline before simulation
     current_e = list(model_wrapper._pred_window)[-1][0]
     current_p = list(model_wrapper._pred_window)[-1][1]
 
     trajectory = model_wrapper.simulate_trajectory(op_dict, steps=3)
 
-    # Annotate with deltas vs pre-apply state
     for step_data in trajectory:
         step_data['energy_delta_pct'] = round(
             (current_e - step_data['energy']) / (current_e + 1e-9) * 100, 2)

@@ -1,5 +1,10 @@
 {
   "buildCommand": "npm --prefix for install && npm --prefix for run build",
   "outputDirectory": "for/dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
+  "git": {
+    "deploymentEnabled": {
+      "main": true
+    }
+  }
 }

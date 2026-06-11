@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './auth/AuthContext'
 import { BrandingProvider } from './branding/BrandingContext'
 import { MobileNavProvider } from './context/MobileNavContext'
+import { LiveDataProvider } from './context/LiveDataContext'
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
@@ -20,6 +21,7 @@ function App() {
       <AuthProvider>
         <BrandingProvider>
           <MobileNavProvider>
+          <LiveDataProvider>
           <Routes>
             <Route path="/login" element={<Login />} />
 
@@ -58,6 +60,7 @@ function App() {
 
             <Route path="*" element={<Login />} />
           </Routes>
+          </LiveDataProvider>
           </MobileNavProvider>
         </BrandingProvider>
       </AuthProvider>

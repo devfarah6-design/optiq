@@ -1,24 +1,17 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useCallback } from 'react'
 import {
   Chart as ChartJS, CategoryScale, LinearScale,
   PointElement, LineElement, Filler, Tooltip, Legend,
 } from 'chart.js'
 import { Line } from 'react-chartjs-2'
 import Sidebar from '@/components/Sidebar'
-import { alertApi, predictApi, recommendationApi, Alert, OptimizeResult, Prediction, SimulationStep, canOptimize } from '@/api/client'
+import { predictApi, recommendationApi, Alert, OptimizeResult, canOptimize } from '@/api/client'
 import { useAuth } from '@/auth/AuthContext'
 import { useBranding } from '@/branding/BrandingContext'
 import { useMobileNav } from '@/context/MobileNavContext'
+import { useLiveData } from '@/context/LiveDataContext'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Filler, Tooltip, Legend)
-
-function getWsUrl(): string {
-  const apiUrl = (import.meta as any).env?.VITE_API_URL as string | undefined
-  if (apiUrl) return apiUrl.replace(/^http/, 'ws') + '/ws'
-  return 'ws://localhost:8000/ws'
-}
-
-interface DataPoint { ts: number; energy: number; purity: number }
 
 // ── Staleness helpers ─────────────────────────────────────────────────────────
 const DRIFT_THRESHOLD = 5.0  // percent
@@ -51,77 +44,19 @@ const Dashboard: React.FC = () => {
   const { user }       = useAuth()
   const { company }    = useBranding()
   const { toggle: toggleSidebar } = useMobileNav()
-  const [current,        setCurrent]        = useState<(Prediction & { readings?: number[]; tags?: Record<string, number> }) | null>(null)
-  const [history,        setHistory]        = useState<DataPoint[]>([])
-  const [alerts,         setAlerts]         = useState<Alert[]>([])
-  const [recommendation, setRecommendation] = useState<OptimizeResult | null>(null)
-  const [optLoading,     setOptLoading]     = useState(false)
-  const [applyLoading,   setApplyLoading]   = useState(false)
-  const [applied,        setApplied]        = useState(false)
-  const [simulation,     setSimulation]     = useState<SimulationStep[]>([])
-  const [wsStatus,       setWsStatus]       = useState<'connecting' | 'connected' | 'disconnected'>('connecting')
-  const [exportLoading,  setExportLoading]  = useState(false)
-  const wsRef = useRef<WebSocket | null>(null)
 
-  // ── HTTP fallback: apply a prediction payload (same shape as WS message) ──
-  const applyPrediction = useCallback((p: any) => {
-    setCurrent(p as Prediction)
-    setHistory(prev => [
-      ...prev.slice(-499),
-      { ts: p.timestamp ? new Date(p.timestamp).getTime() : Date.now(), energy: p.energy, purity: p.purity },
-    ])
-  }, [])
+  // ── Persistent live data from context (survives navigation) ───────────────
+  const {
+    current, history, alerts, wsStatus,
+    recommendation, setRecommendation,
+    applied, setApplied,
+    simulation, setSimulation,
+    clearRecommendation,
+  } = useLiveData()
 
-  // ── Fetch latest prediction from DB (REST fallback) ────────────────────────
-  const fetchLatest = useCallback(async () => {
-    try {
-      const res = await predictApi.latestFromDB()
-      applyPrediction(res.data)
-    } catch {
-      // 404 = no data yet in DB; ignore silently
-    }
-  }, [applyPrediction])
-
-  // ── WebSocket ──────────────────────────────────────────────────────────────
-  const connect = useCallback(() => {
-    const url = getWsUrl()
-    try {
-      const ws = new WebSocket(url)
-      wsRef.current = ws
-      setWsStatus('connecting')
-      ws.onopen  = () => setWsStatus('connected')
-      ws.onclose = () => { setWsStatus('disconnected'); setTimeout(connect, 4000) }
-      ws.onerror = () => ws.close()
-      ws.onmessage = ev => {
-        try {
-          const msg = JSON.parse(ev.data as string)
-          if (msg.type === 'new_prediction') {
-            applyPrediction(msg)
-          } else if (msg.type === 'new_alert') {
-            setAlerts(prev => [msg.alert as Alert, ...prev.slice(0, 49)])
-          }
-        } catch { /* ignore */ }
-      }
-    } catch {
-      setWsStatus('disconnected')
-      setTimeout(connect, 4000)
-    }
-  }, [applyPrediction])
-
-  useEffect(() => {
-    alertApi.list().then(r => setAlerts(r.data)).catch(() => {})
-    // Always seed initial data from DB — covers cold starts before first WS message
-    fetchLatest()
-    connect()
-    return () => { wsRef.current?.close() }
-  }, [connect, fetchLatest])
-
-  // ── HTTP polling fallback: when WS is down, poll every 5 s ────────────────
-  useEffect(() => {
-    if (wsStatus === 'connected') return
-    const id = setInterval(fetchLatest, 5000)
-    return () => clearInterval(id)
-  }, [wsStatus, fetchLatest])
+  const [optLoading,    setOptLoading]    = useState(false)
+  const [applyLoading,  setApplyLoading]  = useState(false)
+  const [exportLoading, setExportLoading] = useState(false)
 
   // ── Staleness & drift ──────────────────────────────────────────────────────
   const age = ageLabel(recommendation?.computed_at)
@@ -136,8 +71,7 @@ const Dashboard: React.FC = () => {
   // ── Optimisation ──────────────────────────────────────────────────────────
   const fetchOptimization = async () => {
     setOptLoading(true)
-    setApplied(false)
-    setSimulation([])
+    clearRecommendation()
     try {
       // Pass current OP readings as base_readings — new model uses OP values
       const currentSetpoints = [
@@ -168,7 +102,7 @@ const Dashboard: React.FC = () => {
         setSimulation(res.data.simulation)
       }
       // Clear result_id so double-apply is blocked
-      setRecommendation(prev => prev ? { ...prev, result_id: undefined } : null)
+      setRecommendation(recommendation ? { ...recommendation, result_id: undefined } : null)
     } catch (e: any) {
       console.error('Apply failed:', e)
       alert(e?.response?.data?.detail ?? 'Failed to record application')
@@ -768,5 +702,6 @@ const AlertRow: React.FC<{ alert: Alert }> = ({ alert: a }) => (
     </div>
   </div>
 )
+
 
 export default Dashboard

@@ -49,7 +49,7 @@ const Admin: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const promises: Promise<any>[] = [
+      const promises: PromiseLike<any>[] = [
         siteApi.list(),
         columnApi.list(),
         adminApi.getConfig(),

@@ -1,1 +1,0 @@
-# OPTIQ DSS · app package

@@ -6,7 +6,7 @@ import React, { useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import { useMobileNav } from '@/context/MobileNavContext'
 import { useAuth } from '@/auth/AuthContext'
-import { isAdmin, isCompanyAdmin } from '@/api/client'
+// role helpers available if needed: import { isAdmin } from '@/api/client'
 
 // ── Section types ──────────────────────────────────────────────────────────────
 interface Section {

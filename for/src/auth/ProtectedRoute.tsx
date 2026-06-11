@@ -20,5 +20,8 @@ export const ProtectedRoute: React.FC<Props> = ({ children, adminOnly }) => {
 
   if (!user) return <Navigate to="/login" replace />
   if (adminOnly && !ADMIN_ROLES.has(user.role)) return <Navigate to="/" replace />
+
   return <>{children}</>
 }
+
+export default ProtectedRoute

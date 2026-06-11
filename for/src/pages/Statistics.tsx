@@ -269,40 +269,14 @@ const RangeBar: React.FC<{
   return (
     <div style={{ marginBottom: '0.75rem' }}>
       <div className="flex justify-between items-center mb-1">
-          </span>
+        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{label}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', fontWeight: 600 }}>{format(value)}</span>
       </div>
       <div style={{ height: 6, borderRadius: 999, background: 'var(--border)', overflow: 'hidden' }}>
         <div style={{
           height: '100%', width: `${pct}%`,
           background: color, borderRadius: 999,
           transition: 'width 0.4s var(--ease)',
-        }} />
-      </div>
-    </div>
-  )
-}
-
-export default Statistics
-<div style={{
-          height: '100%',
-          width: `${pct}%`,
-          background: color,
-          borderRadius: 999,
-          transition: 'width 0.4s var(--ease)',
-        }} />
-      </div>
-    </div>
-  )
-}
-
-export default Statistics
-        </span>
-      </div>
-      <div style={{ height: 6, borderRadius: 999, background: 'var(--border)', overflow: 'hidden' }}>
-        <div style={{
-          height: '100%', width: `${pct}%`,
-          background: color, borderRadius: 999,
-          transition: 'width 0.5s var(--ease)',
         }} />
       </div>
     </div>

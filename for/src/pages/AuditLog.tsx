@@ -288,26 +288,3 @@ const AuditLog: React.FC = () => {
 }
 
 export default AuditLog
-)}
-                              </td>
-                            </tr>
-                          )}
-                        </React.Fragment>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          <div style={{ textAlign: 'center', marginTop: '2rem', paddingBottom: '1rem' }}>
-            <div className="optiq-badge"><span>OPTIQ</span> Industrial AI Platform · v2.0</div>
-          </div>
-        </main>
-      </div>
-    </div>
-  )
-}
-
-export default AuditLog

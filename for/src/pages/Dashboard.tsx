@@ -67,7 +67,7 @@ const Dashboard: React.FC = () => {
   const applyPrediction = useCallback((p: any) => {
     setCurrent(p as Prediction)
     setHistory(prev => [
-      ...prev.slice(-59),
+      ...prev.slice(-499),
       { ts: p.timestamp ? new Date(p.timestamp).getTime() : Date.now(), energy: p.energy, purity: p.purity },
     ])
   }, [])

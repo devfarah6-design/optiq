@@ -6,6 +6,7 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 from fastapi import (
     FastAPI, Depends, HTTPException, WebSocket,
@@ -833,32 +834,68 @@ def delete_company(
     db.commit()
     write_audit(db, "DELETE_COMPANY", user=current_user,
                 detail={"company_id": company_id},
+                ip=request.client.host if request.client else None, status_code=204)
+    return None
+
+
+# ── Admin Config ───────────────────────────────────────────────────────────────
+@app.get("/admin/config", tags=["admin"],
+         dependencies=[Depends(dependencies.require_admin)])
+def get_config(db: Session = Depends(dependencies.get_db)):
+    rows = db.query(models.AppConfig).all()
+    return {r.key: r.value for r in rows}
+
+
+@app.post("/admin/config", tags=["admin"])
+def set_config(
+    request: Request,
+    cfg_in: schemas.ConfigSet,
+    db: Session = Depends(dependencies.get_db),
+    current_user=Depends(dependencies.require_admin),
+):
+    row = db.query(models.AppConfig).filter_by(key=cfg_in.key).first()
+    if row:
+        row.value = str(cfg_in.value)
+    else:
+        row = models.AppConfig(key=cfg_in.key, value=str(cfg_in.value))
+        db.add(row)
+    db.commit()
+    write_audit(db, "UPDATE_CONFIG", user=current_user,
+                detail={"key": cfg_in.key, "value": cfg_in.value},
                 ip=request.client.host if request.client else None, status_code=200)
-    return {"message": "Company deleted"}
+    return {"key": cfg_in.key, "value": cfg_in.value}
 
 
-@app.get("/branding/{slug}", response_model=schemas.CompanyOut, tags=["branding"])
-def get_branding(slug: str, db: Session = Depends(dependencies.get_db)):
-    company = db.query(models.Company).filter_by(slug=slug, is_active=True).first()
-    if not company:
-        raise HTTPException(status_code=404, detail="Company not found")
-    return company
+# ── Audit Log ──────────────────────────────────────────────────────────────────
+@app.get("/audit-log", response_model=list[schemas.AuditLogOut],
+         tags=["audit"])
+def get_audit_log(
+    limit:    int = 200,
+    offset:   int = 0,
+    action:   Optional[str] = None,
+    username: Optional[str] = None,
+    db: Session = Depends(dependencies.get_db),
+    _current_user=Depends(dependencies.require_company_admin),
+):
+    q = db.query(models.AuditLog).order_by(models.AuditLog.timestamp.desc())
+    if action:
+        q = q.filter(models.AuditLog.action == action)
+    if username:
+        q = q.filter(models.AuditLog.username.ilike(f"%{username}%"))
+    return q.offset(offset).limit(limit).all()
 
 
-# ── Sites (company admin and above) ───────────────────────────────────────────
+# ── Sites ──────────────────────────────────────────────────────────────────────
 @app.get("/sites", response_model=list[schemas.SiteOut], tags=["sites"])
 def list_sites(
-    company_id: int | None = None,
+    company_id: Optional[int] = None,
     db: Session = Depends(dependencies.get_db),
-    current_user=Depends(dependencies.get_current_user),
+    _cu=Depends(dependencies.get_current_user),
 ):
-    q = db.query(models.Site)
-    # Company admins see only their company; system admins see all
-    if current_user.role == models.UserRole.COMPANY_ADMIN:
-        q = q.filter_by(company_id=current_user.company_id)
-    elif company_id:
+    q = db.query(models.Site).filter_by(is_active=True)
+    if company_id:
         q = q.filter_by(company_id=company_id)
-    return q.all()
+    return q.order_by(models.Site.name).all()
 
 
 @app.post("/sites", response_model=schemas.SiteOut, tags=["sites"])
@@ -868,12 +905,16 @@ def create_site(
     db: Session = Depends(dependencies.get_db),
     current_user=Depends(dependencies.require_company_admin),
 ):
+    # company_admin can only create sites under their own company
+    if current_user.role == models.UserRole.COMPANY_ADMIN:
+        if site_in.company_id != current_user.company_id:
+            raise HTTPException(status_code=403, detail="Cannot create site for another company")
     site = models.Site(**site_in.model_dump())
     db.add(site)
     db.commit()
     db.refresh(site)
-    write_audit(db, "CREATE_SITE", user=current_user, endpoint="POST /sites",
-                detail={"site_name": site_in.name, "company_id": site_in.company_id},
+    write_audit(db, "CREATE_SITE", user=current_user,
+                detail={"site_id": site.id, "name": site.name},
                 ip=request.client.host if request.client else None, status_code=200)
     return site
 
@@ -889,14 +930,19 @@ def update_site(
     site = db.query(models.Site).get(site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
+    if current_user.role == models.UserRole.COMPANY_ADMIN and site.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Cannot modify site of another company")
     for field, val in update.model_dump(exclude_none=True).items():
         setattr(site, field, val)
     db.commit()
     db.refresh(site)
+    write_audit(db, "UPDATE_SITE", user=current_user,
+                detail={"site_id": site_id},
+                ip=request.client.host if request.client else None, status_code=200)
     return site
 
 
-@app.delete("/sites/{site_id}", tags=["sites"])
+@app.delete("/sites/{site_id}", status_code=204, tags=["sites"])
 def delete_site(
     request: Request,
     site_id: int,
@@ -906,34 +952,34 @@ def delete_site(
     site = db.query(models.Site).get(site_id)
     if not site:
         raise HTTPException(status_code=404, detail="Site not found")
+    if current_user.role == models.UserRole.COMPANY_ADMIN and site.company_id != current_user.company_id:
+        raise HTTPException(status_code=403, detail="Cannot delete site of another company")
     db.delete(site)
     db.commit()
     write_audit(db, "DELETE_SITE", user=current_user,
                 detail={"site_id": site_id},
-                ip=request.client.host if request.client else None, status_code=200)
-    return {"message": "Site deleted"}
+                ip=request.client.host if request.client else None, status_code=204)
+    return None
 
 
 # ── Distillation Columns ───────────────────────────────────────────────────────
 @app.get("/columns", response_model=list[schemas.ColumnOut], tags=["columns"])
 def list_columns(
-    site_id: int | None = None,
+    site_id: Optional[int] = None,
     db: Session = Depends(dependencies.get_db),
-    _=Depends(dependencies.get_current_user),
+    _cu=Depends(dependencies.get_current_user),
 ):
-    q = db.query(models.DistillationColumn).order_by(
-        models.DistillationColumn.sequence_order
-    )
+    q = db.query(models.DistillationColumn).filter_by(is_active=True)
     if site_id:
         q = q.filter_by(site_id=site_id)
-    return q.all()
+    return q.order_by(models.DistillationColumn.sequence_order).all()
 
 
 @app.get("/columns/{column_id}", response_model=schemas.ColumnOut, tags=["columns"])
 def get_column(
     column_id: int,
     db: Session = Depends(dependencies.get_db),
-    _=Depends(dependencies.get_current_user),
+    _cu=Depends(dependencies.get_current_user),
 ):
     col = db.query(models.DistillationColumn).get(column_id)
     if not col:
@@ -948,12 +994,17 @@ def create_column(
     db: Session = Depends(dependencies.get_db),
     current_user=Depends(dependencies.require_company_admin),
 ):
+    # Verify site ownership for company_admin
+    if current_user.role == models.UserRole.COMPANY_ADMIN:
+        site = db.query(models.Site).get(col_in.site_id)
+        if not site or site.company_id != current_user.company_id:
+            raise HTTPException(status_code=403, detail="Cannot add column to site outside your company")
     col = models.DistillationColumn(**col_in.model_dump())
     db.add(col)
     db.commit()
     db.refresh(col)
-    write_audit(db, "CREATE_COLUMN", user=current_user, endpoint="POST /columns",
-                detail={"column_name": col_in.name, "tag": col_in.tag},
+    write_audit(db, "CREATE_COLUMN", user=current_user,
+                detail={"column_id": col.id, "tag": col.tag, "name": col.name},
                 ip=request.client.host if request.client else None, status_code=200)
     return col
 
@@ -969,9 +1020,12 @@ def update_column(
     col = db.query(models.DistillationColumn).get(column_id)
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
+    if current_user.role == models.UserRole.COMPANY_ADMIN:
+        site = db.query(models.Site).get(col.site_id)
+        if not site or site.company_id != current_user.company_id:
+            raise HTTPException(status_code=403, detail="Cannot modify column outside your company")
     for field, val in update.model_dump(exclude_none=True).items():
         setattr(col, field, val)
-    col.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(col)
     write_audit(db, "UPDATE_COLUMN", user=current_user,
@@ -980,7 +1034,7 @@ def update_column(
     return col
 
 
-@app.delete("/columns/{column_id}", tags=["columns"])
+@app.delete("/columns/{column_id}", status_code=204, tags=["columns"])
 def delete_column(
     request: Request,
     column_id: int,
@@ -990,105 +1044,88 @@ def delete_column(
     col = db.query(models.DistillationColumn).get(column_id)
     if not col:
         raise HTTPException(status_code=404, detail="Column not found")
+    if current_user.role == models.UserRole.COMPANY_ADMIN:
+        site = db.query(models.Site).get(col.site_id)
+        if not site or site.company_id != current_user.company_id:
+            raise HTTPException(status_code=403, detail="Cannot delete column outside your company")
     db.delete(col)
     db.commit()
     write_audit(db, "DELETE_COLUMN", user=current_user,
                 detail={"column_id": column_id},
-                ip=request.client.host if request.client else None, status_code=200)
-    return {"message": "Column deleted"}
-
-
-# ── Audit Log ──────────────────────────────────────────────────────────────────
-@app.get("/audit-log", response_model=list[schemas.AuditLogOut], tags=["admin"])
-def get_audit_log(
-    limit: int = 100,
-    action: str | None = None,
-    username: str | None = None,
-    db: Session = Depends(dependencies.get_db),
-    current_user=Depends(dependencies.require_company_admin),
-):
-    q = db.query(models.AuditLog).order_by(models.AuditLog.timestamp.desc())
-    if action:
-        q = q.filter_by(action=action)
-    if username:
-        q = q.filter_by(username=username)
-    return q.limit(limit).all()
+                ip=request.client.host if request.client else None, status_code=204)
+    return None
 
 
 # ── Statistics ─────────────────────────────────────────────────────────────────
 @app.get("/stats", response_model=schemas.StatsOut, tags=["stats"])
 def get_stats(
-    column_tag: str = "DC4",
+    column_tag:   str = "DC4",
     period_hours: int = 24,
     db: Session = Depends(dependencies.get_db),
-    _=Depends(dependencies.get_current_user),
+    _cu=Depends(dependencies.get_current_user),
 ):
-    since = datetime.now(timezone.utc) - timedelta(hours=period_hours)
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import func
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=period_hours)
 
-    preds = db.query(models.Prediction).filter(
-        models.Prediction.timestamp >= since,
+    pred_q = db.query(models.Prediction).filter(
         models.Prediction.column_tag == column_tag,
-    ).all()
+        models.Prediction.timestamp >= cutoff,
+    )
+    total_pred = pred_q.count()
 
-    recs = db.query(models.OptimizationResult).filter(
-        models.OptimizationResult.requested_at >= since,
+    agg = pred_q.with_entities(
+        func.avg(models.Prediction.energy).label("avg_e"),
+        func.min(models.Prediction.energy).label("min_e"),
+        func.max(models.Prediction.energy).label("max_e"),
+        func.avg(models.Prediction.purity).label("avg_p"),
+        func.min(models.Prediction.purity).label("min_p"),
+        func.max(models.Prediction.purity).label("max_p"),
+    ).first()
+
+    opt_q = db.query(models.OptimizationResult).filter(
         models.OptimizationResult.column_tag == column_tag,
-    ).all()
+        models.OptimizationResult.requested_at >= cutoff,
+    )
+    total_opt = opt_q.count()
+    total_applied = opt_q.filter(models.OptimizationResult.applied == True).count()
 
-    alerts = db.query(models.Alert).filter(
-        models.Alert.timestamp >= since,
-        models.Alert.column_tag == column_tag,
-    ).all()
+    # Average energy saving from applied recs
+    applied_recs = opt_q.filter(models.OptimizationResult.applied == True).all()
+    avg_saving = 0.0
+    if applied_recs:
+        savings = [r.energy_savings_pct for r in applied_recs if r.energy_savings_pct is not None]
+        avg_saving = sum(savings) / len(savings) if savings else 0.0
 
-    energies = [p.energy for p in preds] or [0.0]
-    purities = [p.purity for p in preds] or [0.0]
-    avg_saving = sum(r.energy_savings_pct for r in recs) / len(recs) if recs else 0.0
+    alert_q = db.query(models.Alert).filter(models.Alert.timestamp >= cutoff)
+    total_alerts = alert_q.count()
+    critical_alerts = alert_q.filter(models.Alert.severity == models.AlertSeverity.CRITICAL).count()
+
+    def safe(v, default=0.0):
+        return float(v) if v is not None else default
 
     return schemas.StatsOut(
-        column_tag          = column_tag,
-        period_hours        = period_hours,
-        total_predictions   = len(preds),
-        avg_energy          = round(sum(energies) / len(energies), 4),
-        min_energy          = round(min(energies), 4),
-        max_energy          = round(max(energies), 4),
-        avg_purity          = round(sum(purities) / len(purities), 2),
-        min_purity          = round(min(purities), 2),
-        max_purity          = round(max(purities), 2),
-        total_optimizations = len(recs),
-        total_applied       = sum(1 for r in recs if r.applied),
-        avg_energy_saving   = round(avg_saving, 2),
-        total_alerts        = len(alerts),
-        critical_alerts     = sum(1 for a in alerts if a.severity == models.AlertSeverity.CRITICAL),
+        column_tag=column_tag,
+        period_hours=period_hours,
+        total_predictions=total_pred,
+        avg_energy=safe(agg.avg_e if agg else None),
+        min_energy=safe(agg.min_e if agg else None),
+        max_energy=safe(agg.max_e if agg else None),
+        avg_purity=safe(agg.avg_p if agg else None),
+        min_purity=safe(agg.min_p if agg else None),
+        max_purity=safe(agg.max_p if agg else None),
+        total_optimizations=total_opt,
+        total_applied=total_applied,
+        avg_energy_saving=avg_saving,
+        total_alerts=total_alerts,
+        critical_alerts=critical_alerts,
     )
 
 
-# ── App Config ─────────────────────────────────────────────────────────────────
-@app.get("/admin/config", tags=["admin"],
-         dependencies=[Depends(dependencies.require_company_admin)])
-def get_config(db: Session = Depends(dependencies.get_db)):
-    configs = db.query(models.AppConfig).all()
-    return {c.key: c.value for c in configs}
-
-
-@app.post("/admin/config", tags=["admin"],
-          dependencies=[Depends(dependencies.require_company_admin)])
-def set_config(payload: schemas.ConfigSet, db: Session = Depends(dependencies.get_db)):
-    cfg = db.query(models.AppConfig).filter_by(key=payload.key).first()
-    if cfg:
-        cfg.value = payload.value
-    else:
-        cfg = models.AppConfig(key=payload.key, value=payload.value)
-        db.add(cfg)
-    db.commit()
-    return {"message": "Config saved"}
-
-
-# ── WebSocket ──────────────────────────────────────────────────────────────────
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    await ws_manager.connect(websocket)
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        ws_manager.disconnect(websocket)
+# ── Branding ───────────────────────────────────────────────────────────────────
+@app.get("/branding/{slug}", response_model=schemas.CompanyOut, tags=["branding"])
+def get_branding(slug: str, db: Session = Depends(dependencies.get_db)):
+    company = db.query(models.Company).filter_by(slug=slug, is_active=True).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company

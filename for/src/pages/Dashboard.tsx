@@ -854,6 +854,8 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
               ? <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-low)', fontSize: '0.875rem' }}>
                   ✓ No alerts detected
                 </div>
+              : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  {alerts.slice(0, 50).map(a => <AlertRow key={a.id} alert={a} />)}
                 </div>
             }
           </div>

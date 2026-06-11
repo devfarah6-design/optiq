@@ -1,0 +1,124 @@
+@startuml OPTIQ_UseCase
+skinparam actorStyle awesome
+skinparam packageStyle rectangle
+skinparam ArrowColor #2E75B6
+skinparam ActorBorderColor #2E75B6
+skinparam UsecaseBorderColor #2E75B6
+skinparam UsecaseBackgroundColor #EAF4FB
+skinparam NoteBackgroundColor #FFFBE6
+skinparam NoteBorderColor #D4A017
+
+title OPTIQ DSS — Use Case Diagram (DC4 Butane Debutanizer)
+
+actor Operator
+actor Engineer
+actor "Company / Site Admin" as Admin
+actor "FOPDT Simulation\nEngine" as FOPDT <<system>>
+actor "XGBoost Surrogate\nModel" as XGB <<system>>
+actor "DCS / SCADA" as DCS <<system>>
+
+rectangle "OPTIQ DSS" {
+
+  package "Monitoring & Prediction" {
+    usecase "UC01\nView Live Dashboard" as UC01
+    usecase "UC02\nPredict Energy &\nPurity (XGBoost)" as UC02
+    usecase "UC03\nView Sensor Alerts" as UC03
+    usecase "UC04\nAcknowledge Alert" as UC04
+  }
+
+  package "Optimisation" {
+    usecase "UC05\nRequest Setpoint\nRecommendation (DE)" as UC05
+    usecase "UC06\nView Recommendation\n& Simulation" as UC06
+    usecase "UC07\nApply Recommendation\n& FOPDT Simulation" as UC07
+  }
+
+  package "Process Tracking" {
+    usecase "UC08\nAuto-Track Process\nResponse (+5/+15/+30 min)" as UC08
+    usecase "UC09\nView Tracking Results\n& Deviations" as UC09
+    usecase "UC10\nRecompute\n(Conditions Changed)" as UC10
+  }
+
+  package "History & Audit" {
+    usecase "UC11\nView Optimisation\nHistory" as UC11
+    usecase "UC12\nView Audit Log" as UC12
+    usecase "UC13\nView Statistics" as UC13
+  }
+
+  package "Admin Configuration" {
+    usecase "UC14\nManage Companies\n& Sites" as UC14
+    usecase "UC15\nManage Users\n& Roles" as UC15
+    usecase "UC16\nManage Distillation\nColumns" as UC16
+    usecase "UC17\nConfigure SP\nSetpoints" as UC17
+    usecase "UC18\nConfigure FOPDT\nDynamics" as UC18
+  }
+}
+
+' Operator
+Operator --> UC01
+Operator --> UC02
+Operator --> UC03
+Operator --> UC04
+Operator --> UC05
+Operator --> UC06
+Operator --> UC07
+Operator --> UC08
+Operator --> UC09
+Operator --> UC10
+Operator --> UC11
+Operator --> UC13
+
+' Engineer (all operator + admin config)
+Engineer --> UC01
+Engineer --> UC02
+Engineer --> UC05
+Engineer --> UC06
+Engineer --> UC07
+Engineer --> UC08
+Engineer --> UC09
+Engineer --> UC10
+Engineer --> UC11
+Engineer --> UC12
+Engineer --> UC17
+Engineer --> UC18
+
+' Admin
+Admin --> UC14
+Admin --> UC15
+Admin --> UC16
+Admin --> UC17
+Admin --> UC18
+Admin --> UC12
+
+' System actors
+UC02 --> XGB : uses
+UC05 --> XGB : evaluates objective
+UC07 --> FOPDT : triggers simulation
+UC08 --> FOPDT : computes predicted PVs
+UC08 --> DCS : reads actual PVs
+
+' Include / Extend
+UC05 .> UC02 : <<include>>
+UC07 .> UC05 : <<extend>>
+UC10 .> UC05 : <<extend>>
+UC09 .> UC08 : <<include>>
+
+note right of UC07
+  On apply, FOPDT engine computes
+  blended OP at +5/+15/+30 min and
+  returns predicted DCS tag values
+end note
+
+note right of UC08
+  Browser timers fire at each horizon.
+  Backend compares predicted vs actual
+  DCS readings. Flags suggest_reoptimize
+  if max deviation > 5%
+end note
+
+note right of UC18
+  Admin sets per-OP K, tau, theta, pv_nom.
+  Admin sets horizon list (seconds).
+  Stored in column.config JSON (DB).
+end note
+
+@enduml

@@ -1,0 +1,230 @@
+@startuml OPTIQ_Class
+skinparam classAttributeIconSize 0
+skinparam ClassBorderColor #2E75B6
+skinparam ClassBackgroundColor #EAF4FB
+skinparam ClassHeaderBackgroundColor #2E75B6
+skinparam ClassFontColor white
+skinparam ArrowColor #2E75B6
+skinparam NoteBackgroundColor #FFFBE6
+skinparam NoteBorderColor #D4A017
+
+title OPTIQ DSS — Class Diagram
+
+' ─── Domain / DB models ───────────────────────────────────────────────────────
+class Company {
+  + id : int
+  + slug : str
+  + name : str
+  + sector : str
+  + primary_color : str
+  + accent_color : str
+  + is_active : bool
+}
+
+class Site {
+  + id : int
+  + company_id : int
+  + name : str
+  + location : str
+  + is_active : bool
+}
+
+class DistillationColumn {
+  + id : int
+  + site_id : int
+  + name : str
+  + tag : str  <<e.g. "DC4">>
+  + model_path : str
+  + config : Dict  <<JSON>>
+  --
+  + get_fopdt_params() : List[FopdtParams]
+  + get_sp_config() : List[SetpointConfig]
+  + get_horizons() : List[int]
+}
+
+class OptimizationResult {
+  + id : int
+  + column_tag : str
+  + current_setpoints : List[float]
+  + recommended_setpoints : List[float]
+  + current_energy : float
+  + expected_energy : float
+  + energy_savings_pct : float
+  + current_purity : float
+  + expected_purity : float
+  + applied : bool
+  + applied_at : datetime
+  + applied_by_username : str
+  + status : str
+  + feasibility_score : float
+}
+
+class SimulationStep {
+  + step : int
+  + time_s : int
+  + label : str
+  + energy : float
+  + purity : float
+  + butane : float
+  + energy_delta_pct : float
+  + purity_delta_pct : float
+  + tag_values : Dict[str, float]
+}
+
+class TrackingResult {
+  + result_id : int
+  + elapsed_s : float
+  + tracking_ok : bool
+  + tracking_score : float
+  + worst_deviation_pct : float
+  + deviations : Dict[str, DeviationEntry]
+  + message : str
+  + suggest_reoptimize : bool
+}
+
+class DeviationEntry {
+  + predicted : float
+  + actual : float
+  + deviation_pct : float
+  + unit : str
+}
+
+' ─── Config value objects ─────────────────────────────────────────────────────
+class FopdtParams {
+  + op_tag : str
+  + pv_tag : str
+  + K : float  <<gain>>
+  + tau : float  <<time constant s>>
+  + theta : float  <<dead time s>>
+  + pv_nom : float  <<nominal PV>>
+}
+
+class SetpointConfig {
+  + tag : str
+  + desc : str
+  + unit : str
+  + nominal : float
+  + lo : float
+  + hi : float
+  + recommended : float
+}
+
+class ColumnConfig {
+  + fopdt_params : List[FopdtParams]
+  + sp_config : List[SetpointConfig]
+  + horizons : List[int]
+}
+
+' ─── ML / Optimization layer ─────────────────────────────────────────────────
+class XGBoostSurrogate {
+  + model_path : str
+  + scaler_path : str
+  --
+  + predict(readings: List[float]) : PredictionOut
+  + is_outlier(readings: List[float]) : bool
+}
+
+class DEOptimiser {
+  + pop_size : int
+  + max_iter : int
+  + F : float
+  + CR : float
+  + move_suppression : float
+  --
+  + optimise(current_state, sp_config, surrogate) : OptimizeOut
+  - _objective(x, current_state, surrogate) : float
+  - _penalty_energy(pred) : float
+  - _penalty_purity(pred) : float
+  - _penalty_move(x, current_state, sp_config) : float
+}
+
+class FopdtSimulator {
+  + params : List[FopdtParams]
+  + horizons : List[int]
+  --
+  + simulate(current_sp, recommended_sp) : List[SimulationStep]
+  - _settling(t, theta, tau) : float
+  - _blend_op(current, recommended, settling) : float
+}
+
+class ProcessTracker {
+  + deviation_threshold_pct : float = 5.0
+  --
+  + check(result_id, actual_tags, simulation_steps, elapsed_s) : TrackingResult
+  - _interpolate_predicted(elapsed_s, steps) : Dict[str, float]
+  - _compute_deviation(predicted, actual) : float
+}
+
+class WebSocketManager {
+  + active_connections : Dict[str, WebSocket]
+  --
+  + connect(client_id, ws) : void
+  + disconnect(client_id) : void
+  + broadcast(column_tag, data) : void
+}
+
+' ─── API / Schema layer ───────────────────────────────────────────────────────
+class OptimizeRequest {
+  + current_state : List[float]
+  + base_readings : List[float]
+  + column_tag : str
+}
+
+class ApplyRecommendationOut {
+  + result_id : int
+  + applied_at : datetime
+  + applied_by_username : str
+  + message : str
+  + simulation : List[SimulationStep]
+}
+
+class TrackingOut {
+  + result_id : int
+  + elapsed_s : float
+  + tracking_ok : bool
+  + suggest_reoptimize : bool
+  + deviations : Dict[str, DeviationEntry]
+}
+
+' ─── Relationships ────────────────────────────────────────────────────────────
+Company "1" *-- "many" Site
+Site "1" *-- "many" DistillationColumn
+DistillationColumn "1" *-- "1" ColumnConfig
+ColumnConfig "1" *-- "many" FopdtParams
+ColumnConfig "1" *-- "many" SetpointConfig
+
+DistillationColumn "1" -- "many" OptimizationResult
+OptimizationResult "1" -- "many" SimulationStep
+
+DEOptimiser ..> XGBoostSurrogate : <<uses>>
+DEOptimiser ..> SetpointConfig : <<reads bounds>>
+FopdtSimulator ..> FopdtParams : <<uses>>
+FopdtSimulator ..> SimulationStep : <<creates>>
+ProcessTracker ..> SimulationStep : <<reads>>
+ProcessTracker ..> TrackingResult : <<creates>>
+TrackingResult "1" *-- "many" DeviationEntry
+
+TrackingOut ..> TrackingResult : <<serialises>>
+ApplyRecommendationOut ..> SimulationStep : <<contains>>
+
+note bottom of DEOptimiser
+  Differential Evolution (SciPy)
+  Objective = w1*energy + w2*(1-purity)
+            + w3*move_suppression
+  Constraints: SP bounds from SetpointConfig
+end note
+
+note bottom of FopdtSimulator
+  settling(t) = 1 - exp(-(t-θ)/τ)
+  OP_blend = current + settling*(recommended-current)
+  PV = pv_nom + K*(OP_blend - 50%)
+  Horizons default: [300, 900, 1800] s
+end note
+
+note bottom of ProcessTracker
+  deviation_pct = |actual - predicted| / |predicted| * 100
+  suggest_reoptimize if any deviation_pct > 5%
+  Timers fire in browser at each horizon
+end note
+
+@enduml

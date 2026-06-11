@@ -1,0 +1,118 @@
+@startuml OPTIQ_Sequence
+skinparam sequenceArrowThickness 2
+skinparam ParticipantBorderColor #2E75B6
+skinparam ParticipantBackgroundColor #EAF4FB
+skinparam SequenceGroupBorderColor #2E75B6
+skinparam SequenceGroupBodyBackgroundColor #F0F8FF
+skinparam NoteBackgroundColor #FFFBE6
+skinparam NoteBorderColor #D4A017
+skinparam SequenceLifeLineBorderColor #2E75B6
+
+title OPTIQ DSS — Sequence Diagram (Full Optimisation & Tracking Flow)
+
+actor Operator
+participant "React\nDashboard" as FE
+participant "FastAPI\nBackend" as BE
+participant "XGBoost\nSurrogate" as XGB
+participant "DE\nOptimiser" as DE
+participant "FOPDT\nSimulator" as FOPDT
+participant "Process\nTracker" as PT
+database "PostgreSQL" as DB
+participant "DCS / SCADA" as DCS
+
+== 1. Live Sensor Feed ==
+DCS -> BE : WebSocket: sensor readings (33 tags)
+BE -> XGB : predict(readings)
+XGB --> BE : {energy, purity, butane, is_outlier}
+BE -> DB : save PredictionLog
+BE -> FE : WebSocket broadcast: {energy, purity, tags}
+FE -> FE : render live KPI cards
+
+== 2. Request Optimisation ==
+Operator -> FE : click "Update Recommendation"
+FE -> BE : POST /recommendations/optimize\n{current_state, base_readings, column_tag}
+BE -> DB : load DistillationColumn (SP config, FOPDT params, horizons)
+BE -> XGB : predict(base_readings) — baseline KPIs
+
+group DE Optimisation Loop [max_iter iterations]
+  BE -> DE : optimise(current_state, sp_config, surrogate)
+  loop for each candidate solution
+    DE -> XGB : predict(candidate_readings)
+    XGB --> DE : {energy, purity}
+    DE -> DE : compute objective =\n  w1*energy + w2*(1-purity)\n  + w3*move_suppression
+  end
+  DE --> BE : best_solution, feasibility_score
+end
+
+BE -> DB : save OptimizationResult (status="computed")
+BE --> FE : OptimizeOut {result_id, recommended_setpoints,\n  energy_savings_pct, purity_improvement_pct,\n  sp_config}
+FE -> FE : render Recommendation panel
+
+== 3. Apply Recommendation + FOPDT Simulation ==
+Operator -> FE : click "Apply Recommendation"
+FE -> BE : POST /recommendations/{result_id}/apply
+BE -> DB : mark OptimizationResult applied=True, applied_at
+BE -> FOPDT : simulate(current_sp, recommended_sp,\n  fopdt_params, horizons)
+
+loop for each horizon h in [300s, 900s, 1800s]
+  FOPDT -> FOPDT : settling = 1 - exp(-(h - θ) / τ)
+  FOPDT -> FOPDT : OP_blend = current + settling*(rec - current)
+  FOPDT -> FOPDT : PV = pv_nom + K*(OP_blend - 50%)
+  FOPDT -> FOPDT : predict energy/purity via surrogate
+end
+
+FOPDT --> BE : List[SimulationStep]\n  [{label:"+5 min", time_s:300, tag_values:{...}},\n   {label:"+15 min", time_s:900, ...},\n   {label:"+30 min", time_s:1800, ...}]
+BE --> FE : ApplyRecommendationOut {result_id, simulation}
+FE -> FE : render FOPDT panel (3 horizon cards)\nshow "verify on DCS" tags
+
+note over FE
+  FE stores result_id and simulation in state.
+  Browser schedules setTimeout callbacks
+  at time_s * 1000 ms for each horizon.
+end note
+
+== 4. Automatic Process Tracking (Timer-Based) ==
+note over FE,DCS
+  Each setTimeout fires at the exact horizon time (+5, +15, +30 min after apply)
+end note
+
+loop for each horizon idx (fires at time_s * 1000 ms)
+  FE -> FE : setTimeout fires\nread currentTagsRef (live DCS values)
+  FE -> BE : POST /recommendations/{result_id}/tracking\n  {actual_tag_values: {2TIC403:94.1, ...}}
+  BE -> DB : load OptimizationResult.simulation_steps
+  BE -> PT : check(result_id, actual_tags, simulation_steps, elapsed_s)
+  PT -> PT : interpolate predicted PV at elapsed_s
+  PT -> PT : deviation_pct = |actual - predicted| / predicted * 100
+  PT -> PT : tracking_ok = all deviations ≤ 5%
+  PT -> PT : suggest_reoptimize = any deviation > 5%
+  PT --> BE : TrackingResult
+  BE --> FE : TrackingOut {tracking_ok, suggest_reoptimize,\n  deviations: {tag: {predicted, actual, deviation_pct}}}
+  FE -> FE : update horizon card:\n  - green border if tracking_ok\n  - show actual value, strikethrough predicted\n  - red badge if deviation > 5%
+end
+
+== 5a. Tracking OK — No Action Needed ==
+FE -> FE : show "✓ DCS tracking · max deviation X%"\nButton stays "⚡ Update Recommendation"
+
+== 5b. Deviation Detected — Recompute ==
+FE -> FE : show red banner "⚠ Process deviated..."\nButton changes to "⚠ Recompute (conditions changed)"
+Operator -> FE : click "Recompute (conditions changed)"
+FE -> BE : POST /recommendations/optimize (new cycle)
+note right of FE
+  Recompute restarts the entire flow
+  from step 2 with current live readings
+end note
+
+== 6. Admin: Configure FOPDT Dynamics ==
+actor Engineer
+Engineer -> FE : navigate to Admin → Dynamics tab
+FE -> BE : GET /admin/columns/{tag}/fopdt-config
+BE -> DB : load column.config["fopdt_params"]
+BE --> FE : FopdtConfigOut {params, horizons}
+FE -> FE : render FOPDT param table (K, tau, theta, pv_nom per OP tag)
+Engineer -> FE : edit params, click Save
+FE -> BE : PUT /admin/columns/{tag}/fopdt-config\n{params, horizons}
+BE -> DB : update column.config JSON
+BE --> FE : 200 OK
+FE -> FE : show success toast
+
+@enduml

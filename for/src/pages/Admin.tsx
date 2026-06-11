@@ -984,6 +984,30 @@ const Field: React.FC<{ label: string; children: React.ReactNode }> = ({ label, 
   </div>
 )
 
+const ColourField: React.FC<{ label: string; value: string; onChange: (v: string) => void }> = ({ label, value, onChange }) => (
+  <div>
+    <label style={{ display: 'block', fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+      {label}
+    </label>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+      <input
+        type="color"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        style={{ width: 36, height: 36, padding: 2, borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', cursor: 'pointer', background: 'transparent' }}
+      />
+      <input
+        type="text"
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        className="input"
+        style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}
+        placeholder="#RRGGBB"
+      />
+    </div>
+  </div>
+)
+
 // SETPOINTS TAB
 // ───────────────────────────────────────────────────────────────────────────────
 const SetpointsTab: React.FC<{

@@ -24,6 +24,12 @@ Usage examples:
     # Diagnose before running
     python runner.py --diagnose
 
+Default algorithm order (best first based on benchmark):
+    DE       - energy 614.7, 16.8 s, ~2900 evals  [WINNER]
+    GA       - energy 614.7, 51.0 s, ~9600 evals
+    Bayesian - energy 645.3,  4.4 s,  200 evals (fast, sub-optimal)
+    PSO, NSGA-II, MOEA/D kept for comparison only
+
 Output:
     results/comparison.csv          full metrics table
     results/comparison.txt          printable table
@@ -56,7 +62,7 @@ def run_all(
 ) -> list:
 
     if algorithms is None:
-        algorithms = ['nsga2', 'pso', 'ga', 'de', 'bayesian', 'moead']
+        algorithms = ['de', 'ga', 'bayesian', 'pso', 'nsga2', 'moead']
 
     # ── Load historical context ONCE, shared by all algorithms ───────────────
     hist = None
@@ -346,8 +352,8 @@ examples:
         """,
     )
     parser.add_argument('--algorithms', nargs='+',
-                        default=['nsga2','pso','ga','de','bayesian','moead'],
-                        help='Algorithms to run (default: all 6)')
+                        default=['de','ga','bayesian','pso','nsga2','moead'],
+                        help='Algorithms to run (default: all 6, DE first)')
     parser.add_argument('--seeds',      type=int, default=1,
                         help='Number of random seeds for stability analysis')
     parser.add_argument('--verbose',    action='store_true')
@@ -388,9 +394,9 @@ examples:
         nom_e, _ = get_nominal_performance()
         df['saving_%'] = (nom_e - df['best_energy']) / nom_e * 100
         best = df.loc[df['saving_%'].idxmax()]
-        print(f"\n  Best algorithm : {best['algorithm']}")
-        print(f"  Energy saving  : {best['saving_%']:.2f}%")
-        print(f"  Best purity    : {best['best_purity_pct']:.2f}%")
+        print(f'  Best algorithm : {best["algorithm"]}')
+        print(f'  Energy saving  : {best["saving_%"]:.2f}%')
+        print(f'  Best purity    : {best["best_purity_pct"]:.2f}%')
     else:
-        print("\n✗ No results. Install dependencies:")
-        print("  pip install pymoo deap optuna scipy matplotlib")
+        print('\n No results. Install dependencies:')
+        print('  pip install pymoo deap optuna scipy matplotlib')

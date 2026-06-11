@@ -52,8 +52,8 @@ class PredictionOut(BaseModel):
 # ── Optimization ──────────────────────────────────────────────────────────────
 class OptimizeRequest(BaseModel):
     current_state: List[float] = Field(
-        ..., min_length=3, max_length=3,
-        description="[steam_kg_h, reflux_C, bottom_C] — current setpoints"
+        ..., min_length=1,
+        description="Current OP setpoints (1–5 values)"
     )
     base_readings: Optional[List[float]] = Field(
         None,
@@ -327,3 +327,4 @@ class ParetoOut(BaseModel):
 class ConfigSet(BaseModel):
     key:   str
     value: Any
+                                 

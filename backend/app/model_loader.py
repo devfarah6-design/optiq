@@ -150,11 +150,42 @@ class ModelWrapper:
             # Build OP index map — maps feat_col → live readings vector index
             self._build_op_indices()
 
-            logger.info(
-                f"✓ XGBoost surrogate loaded from {path} | "
-                f"{self.n_features} features | {self.n_lags} lags | "
-                f"{len(self.op_cols)} OP variables"
-            )
+            # ── Validate: test the model on baseline inputs ──────────────────
+            # If the model predicts outside a sane physical range, the scaler
+            # unit mismatch means this deployment can't use it.
+            try:
+                op_nom = {c: _OP_NOMINALS.get(c, 50.0) for c in self.op_cols}
+                fv     = self._build_feature_vector(op_nom)
+                X_test = fv.reshape(1, -1)
+                if self.sc_X is not None:
+                    X_test = self.sc_X.transform(X_test)
+                Y_test = self.model.predict(X_test)[0]
+                e_test, p_test = float(Y_test[0]), float(Y_test[1])
+
+                # Accept only if predictions are in a physically credible range
+                # (anywhere above the clip floor by more than 5%)
+                e_ok = e_test > _ENERGY_RANGE[0] * 1.05
+                p_ok = p_test > _PURITY_RANGE[0] * 1.05
+                if not (e_ok and p_ok):
+                    logger.warning(
+                        f"⚠ XGBoost validation failed — model predicts "
+                        f"energy={e_test:.2f}, purity={p_test:.2f} on baseline inputs. "
+                        f"Unit mismatch between training data and current deployment. "
+                        f"Falling back to physics-based model."
+                    )
+                    self.model_type   = 'dummy'
+                    self.model_family = 'Physics'
+                    return
+                logger.info(
+                    f"✓ XGBoost surrogate loaded & validated from {path} | "
+                    f"{self.n_features} features | {self.n_lags} lags | "
+                    f"baseline test: E={e_test:.1f}, P={p_test:.2f}%"
+                )
+            except Exception as ve:
+                logger.warning(f"⚠ XGBoost validation error ({ve}) — using physics model")
+                self.model_type   = 'dummy'
+                self.model_family = 'Physics'
+
         except Exception as e:
             logger.error(f"Failed to load XGBoost model: {e}", exc_info=True)
             self.model_type = 'dummy'
@@ -340,13 +371,11 @@ class ModelWrapper:
             Y    = self.model.predict(X)[0]
             energy, purity, butane = float(Y[0]), float(Y[1]), float(Y[2])
         else:
-            energy = _TARGET_BASELINE['Target_Energy']
-            purity = _TARGET_BASELINE['Target_Purity_Pct']
-            butane = _TARGET_BASELINE['Target_Butane_Flow']
+            energy, purity, butane = self._physics_predict(op_values)
 
         # Always clip to physical limits — prevents cascade if model extrapolates
         energy = float(np.clip(energy, *_ENERGY_RANGE))
-        purity = float(np.clip(purity, *_PURITY_RANGE))
+        purity = float(np.clip        purity = float(np.clip(purity, *_PURITY_RANGE))
         butane = float(np.clip(butane, *_BUTANE_RANGE))
 
         if update_window:
@@ -354,15 +383,7 @@ class ModelWrapper:
         return energy, purity, butane
 
     def simulate_trajectory(self, op_values: dict, steps: int = 3) -> list:
-        """
-        Simulate process trajectory after applying recommended OP.
-        Rolls predictions forward `steps` time steps.
-
-        Returns list of dicts: [{energy, purity, butane, step}, ...]
-        """
-        # Save current window state
         saved_window = list(self._pred_window)
-
         trajectory = []
         for step in range(1, steps + 1):
             e, p, b = self.predict_at_op(op_values, update_window=True)
@@ -372,16 +393,12 @@ class ModelWrapper:
                 'purity': round(p, 4),
                 'butane': round(b, 4),
             })
-
-        # Restore window (simulation should not affect live state)
         self._pred_window.clear()
         for item in saved_window:
             self._pred_window.append(item)
-
         return trajectory
 
     def get_current_lag_state(self) -> dict:
-        """Return current rolling window state as a snapshot."""
         window = list(self._pred_window)
         return {
             'energy_lag1': window[-1][0], 'energy_lag2': window[-2][0], 'energy_lag3': window[-3][0],
@@ -391,15 +408,97 @@ class ModelWrapper:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
     def _predict_xgb(self, readings: list):
+        # Note: if model_type was downgraded to 'dummy' during validation,
+        # this method is never called — predict() routes to _dummy_predict.
         op_values = self._extract_op_from_readings(readings)
         return self.predict_at_op(op_values, update_window=False)
 
-    def _dummy_predict(self, readings: list):
-        r      = np.array(readings, dtype=float)
-        energy = float(np.clip(996.4 + 50 * (np.std(r) / (np.mean(r) + 1e-6)), 600, 1800))
-        purity = float(np.clip(98.45 - 0.5 * float(np.abs(r - r.mean()).max() /
-                               (r.mean() + 1e-6)), 85.0, 99.9))
-        butane = float(np.clip(3.17 * (purity / 98.45), 1.5, 6.0))
+    @property
+    def op_bounds(self) -> dict:
+        return {
+            '2TIC403.OP - Snapshot': (20.0, 80.0),
+            '2FIC419.OP - Snapshot': (10.0, 90.0),
+            '2LIC409.OP - Snapshot': (10.0, 90.0),
+            '2LIC412.OP - Snapshot': (10.0, 80.0),
+            '2PIC409.OP - Snapshot': (10.0, 80.0),
+        }
+
+    @property
+    def op_display(self) -> list:
+        return [
+            {'col': '2TIC403.OP - Snapshot', 'tag': '2TIC403.OP', 'name': 'Bottom temp controller',    'unit': '%'},
+            {'col': '2FIC419.OP - Snapshot', 'tag': '2FIC419.OP', 'name': 'Feed flow controller',      'unit': '%'},
+            {'col': '2LIC409.OP - Snapshot', 'tag': '2LIC409.OP', 'name': 'Reflux drum level ctrl',    'unit': '%'},
+            {'col': '2LIC412.OP - Snapshot', 'tag': '2LIC412.OP', 'name': 'Bottom level controller',   'unit': '%'},
+            {'col': '2PIC409.OP - Snapshot', 'tag': '2PIC409.OP', 'name': 'Column pressure controller','unit': '%'},
+        ]
+
+
+# Module-level singleton
+model_wrapper = ModelWrapper()
+essure
+
+        # Energy: proportional to steam consumption, modulated by temperature
+        # Nominal: steam=2950 kg/h → energy=996.4 kJ/kg
+        steam_ratio = steam_cond / 2950.0
+        temp_effect = (bottom_t - 94.0) * 8.0           # ±8 kJ/kg per °C
+        energy = 996.4 * steam_ratio + temp_effect
+        energy = float(np.clip(energy, 200.0, 2500.0))
+
+        # Purity: inversely proportional to C5 impurity content
+        # Nominal: c5_imp=0.35 %mol → purity=98.45%
+        # scale = (100 - 98.45) / 0.35 = 4.43
+        purity_from_c5 = 100.0 - c5_imp * 4.43
+        # Pressure effect: higher pressure slightly reduces relative volatility → lower purity
+        pressure_effect = -(pressure - 6.2) * 0.4
+        purity = purity_from_c5 + pressure_effect
+        purity = float(np.clip(purity, 70.0, 99.9))
+
+        # Butane flow: scales with bottom temperature and feed
+        butane = float(np.clip(3.17 * (1.0 + (bottom_t - 94.0) * 0.012), 0.5, 15.0))
+        return energy, purity, butane
+
+    def _physics_predict(self, op_values: dict):
+        """OP-sensitive physics model for the dummy/fallback path.
+        Used by predict_at_op so the optimizer can find meaningful setpoints.
+
+        Controller sensitivities (DC4 debutanizer):
+          2TIC403.OP  — bottom temp:    +energy, +purity (reboiler duty)
+          2LIC409.OP  — reflux level:   +energy, ++purity (separation efficiency)
+          2LIC412.OP  — bottom level:   small energy effect, neutral purity
+          2PIC409.OP  — column pressure: -energy, -purity (VLE effect)
+          2FIC419.OP  — feed flow:      +energy, -purity (dilutes separation)
+        """
+        # Use current lag window as process baseline
+        window    = list(self._pred_window)
+        base_e    = window[-1][0] if window else _TARGET_BASELINE['Target_Energy']
+        base_p    = window[-1][1] if window else _TARGET_BASELINE['Target_Purity_Pct']
+        base_b    = window[-1][2] if window else _TARGET_BASELINE['Target_Butane_Flow']
+
+        # Clamp base to avoid using corrupted lags as reference
+        base_e = float(np.clip(base_e, 300.0, 2200.0))
+        base_p = float(np.clip(base_p, 75.0,  99.5))
+        base_b = float(np.clip(base_b, 0.5,   12.0))
+
+        tic403 = op_values.get('2TIC403.OP - Snapshot', 52.0)
+        lic409 = op_values.get('2LIC409.OP - Snapshot', 50.0)
+        lic412 = op_values.get('2LIC412.OP - Snapshot', 48.0)
+        pic409 = op_values.get('2PIC409.OP - Snapshot', 45.0)
+        fic419 = op_values.get('2FIC419.OP - Snapshot', 48.0)
+
+        # Deltas from nominal operating point (per 10% OP change)
+        d_tic = (tic403 - 52.0) / 10.0
+        d_lic = (lic409 - 50.0) / 10.0
+        d_pic = (pic409 - 45.0) / 10.0
+        d_fic = (fic419 - 48.0) / 10.0
+
+        energy = base_e + 48.0 * d_tic + 38.0 * d_lic + 22.0 * d_fic - 12.0 * d_pic
+        purity = base_p + 0.55 * d_tic + 1.3 * d_lic - 0.18 * d_fic - 0.15 * d_pic
+        butane = base_b * (1.0 + 0.025 * d_fic - 0.008 * d_tic)
+
+        energy = float(np.clip(energy, 200.0, 2500.0))
+        purity = float(np.clip(purity, 70.0,  99.9))
+        butane = float(np.clip(butane, 0.3,   15.0))
         return energy, purity, butane
 
     @property

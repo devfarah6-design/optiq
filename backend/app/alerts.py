@@ -262,10 +262,15 @@ STUCK_THRESHOLDS: Dict[str, float] = {
 
 # ─────────────────────────────────────────────────────────────────────────────
 class SensorHealthMonitor:
+    # Minimum seconds between identical (tag, alert_type) alerts written to DB.
+    # Prevents alert storms when the same condition persists over many cycles.
+    COOLDOWN_SECONDS = 120
 
     def __init__(self, history_size: int = 60):
         self.history_size = history_size
         self.history: Dict[str, deque] = {}
+        # (tag, alert_type) → last fired timestamp
+        self._last_fired: Dict[tuple, float] = {}
 
     def _hist(self, tag: str) -> deque:
         if tag not in self.history:
@@ -443,7 +448,18 @@ class SensorHealthMonitor:
                 all_alerts.append(v)
 
         all_alerts.extend(self.check_redundancy(readings_dict))
-        return all_alerts
+
+        # ── Cooldown filter: suppress repeated (tag, type) within cooldown window ──
+        import time
+        now = time.monotonic()
+        filtered: List[Dict] = []
+        for alert in all_alerts:
+            key = (alert.get('tag_name', ''), alert.get('alert_type', ''))
+            last = self._last_fired.get(key, 0.0)
+            if now - last >= self.COOLDOWN_SECONDS:
+                self._last_fired[key] = now
+                filtered.append(alert)
+        return filtered
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────

@@ -110,6 +110,16 @@ export const spConfigApi = {
     api.put<SetpointConfigOut>(`/config/setpoints?column_tag=${column_tag}`, { setpoints }),
 }
 
+// ── FOPDT Process Dynamics Config ────────────────────────────────────────────
+export const fopdtConfigApi = {
+  get:    (column_tag = 'DC4') =>
+    api.get<FopdtConfigOut>(`/config/fopdt?column_tag=${column_tag}`),
+  update: (params: FopdtEntry[], horizons: number[], column_tag = 'DC4') =>
+    api.put<FopdtConfigOut>(`/config/fopdt?column_tag=${column_tag}`, { params, horizons }),
+  checkTracking: (result_id: number, actual_tag_values: Record<string, number>) =>
+    api.post<TrackingOut>(`/recommendations/${result_id}/tracking`, actual_tag_values),
+}
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 export const statsApi = {
   get: (column_tag = 'DC4', period_hours = 24) =>
@@ -212,11 +222,47 @@ export interface OptimizationRecord {
 
 export interface SimulationStep {
   step:             number
+  time_s:           number          // seconds after apply
+  label:            string          // "+5 min", "+15 min", "+30 min"
   energy:           number
   purity:           number
   butane:           number
   energy_delta_pct: number
   purity_delta_pct: number
+  tag_values:       Record<string, number>  // DCS-readable: {2TIC403: 94.8, ...}
+}
+
+export interface FopdtEntry {
+  op_tag:  string   // controller output tag e.g. "2TIC403.OP"
+  pv_tag:  string   // process variable tag e.g. "2TIC403"
+  desc:    string
+  unit:    string
+  K:       number   // process gain (PV unit per % OP)
+  tau:     number   // time constant (seconds)
+  theta:   number   // dead time (seconds)
+  pv_nom:  number   // nominal PV at 50% OP
+}
+
+export interface FopdtConfigOut {
+  column_tag: string
+  params:     FopdtEntry[]
+  horizons:   number[]   // seconds: [300, 900, 1800]
+}
+
+export interface TrackingOut {
+  result_id:           number
+  elapsed_s:           number
+  tracking_ok:         boolean
+  tracking_score:      number
+  worst_deviation_pct: number
+  deviations:          Record<string, {
+    predicted:     number
+    actual:        number
+    deviation_pct: number
+    unit:          string
+  }>
+  message:             string
+  suggest_reoptimize:  boolean
 }
 
 export interface ApplyResult {

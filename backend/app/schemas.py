@@ -96,11 +96,14 @@ class OptimizeOut(BaseModel):
 # ── Apply recommendation ──────────────────────────────────────────────────────
 class SimulationStep(BaseModel):
     step:              int
+    time_s:            int   = 0       # seconds after apply
+    label:             str   = ""      # human label: "+5 min", "+15 min", "+30 min"
     energy:            float
     purity:            float
     butane:            float
     energy_delta_pct:  float = 0.0
     purity_delta_pct:  float = 0.0
+    tag_values:        Dict[str, float] = {}  # DCS-readable: {"2TIC403": 94.8, ...}
 
 
 class ApplyRecommendationOut(BaseModel):
@@ -323,14 +326,50 @@ class SetpointEntry(BaseModel):
 
 class SetpointConfigOut(BaseModel):
     column_tag: str
-    setpoints:  List[SetpointEntry]
+    setpoints:  Lis
+
+# -- FOPDT Process Dynamics (admin-configurable) ------------------------------
+class FopdtEntry(BaseModel):
+    op_tag:  str
+    pv_tag:  str
+    desc:    str   = ""
+    unit:    str   = ""
+    K:       float         # process gain (PV unit per % OP)
+    tau:     float         # time constant in seconds
+    theta:   float         # dead time in seconds
+    pv_nom:  float = 50.0  # nominal PV at 50% OP (DCS baseline)
 
 
-class SetpointConfigUpdate(BaseModel):
-    setpoints: List[SetpointEntry]
+class FopdtConfigOut(BaseModel):
+    column_tag: str
+    params:     List[FopdtEntry]
+    horizons:   List[int]  # seconds: e.g. [300, 900, 1800]
 
 
-# -- App Config (key/value store) -------------------------------------------
+class FopdtConfigUpdate(BaseModel):
+    params:   List[FopdtEntry]
+    horizons: Optional[List[int]] = None
+
+
+# -- Process tracking result --------------------------------------------------
+class TrackingDeviation(BaseModel):
+    predicted:     float
+    actual:        float
+    deviation_pct: float
+    unit:          str = ""
+
+
+class TrackingOut(BaseModel):
+    result_id:           int
+    elapsed_s:           float
+    tracking_ok:         bool
+    tracking_score:      float
+    worst_deviation_pct: float
+    deviations:          Dict[str, Any]  # {pv_tag: TrackingDeviation dict}
+    message:             str
+    suggest_reoptimize:  bool
+
+
 class ConfigSet(BaseModel):
     key:   str
     value: Any

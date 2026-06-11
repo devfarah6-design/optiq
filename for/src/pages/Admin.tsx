@@ -6,8 +6,8 @@
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import Sidebar from '@/components/Sidebar'
-import { adminApi, authApi, siteApi, columnApi, spConfigApi } from '@/api/client'
-import type { Company, CompanyCreate, Site, SiteCreate, DistillationColumn, ColumnCreate, SetpointEntry } from '@/api/client'
+import { adminApi, authApi, siteApi, columnApi, spConfigApi, fopdtConfigApi } from '@/api/client'
+import type { Company, CompanyCreate, Site, SiteCreate, DistillationColumn, ColumnCreate, SetpointEntry, FopdtEntry } from '@/api/client'
 import { useBranding } from '@/branding/BrandingContext'
 import { useAuth } from '@/auth/AuthContext'
 import { isAdmin } from '@/api/client'
@@ -23,7 +23,7 @@ const SECTOR_PALETTES: Record<string, { primary: string; accent: string; bg: str
   'Other':           { primary: '#A78BFA', accent: '#60A5FA', bg: '#12101A' },
 }
 
-type Tab = 'companies' | 'sites' | 'columns' | 'users' | 'config' | 'setpoints'
+type Tab = 'companies' | 'sites' | 'columns' | 'users' | 'config' | 'setpoints' | 'dynamics'
 
 const Admin: React.FC = () => {
   const { user }            = useAuth()
@@ -75,6 +75,7 @@ const Admin: React.FC = () => {
     { id: 'users',     label: '👤 Users' },
     { id: 'config',     label: '⚙️ Config' },
     { id: 'setpoints',  label: '🎯 Setpoints' },
+    { id: 'dynamics',   label: '📈 Dynamics' },
   ].filter(t => !t.adminOnly || systemAdmin)
 
   return (
@@ -166,6 +167,9 @@ const Admin: React.FC = () => {
               )}
               {tab === 'setpoints' && (
                 <SetpointsTab showToast={showToast} />
+              )}
+              {tab === 'dynamics' && (
+                <DynamicsTab showToast={showToast} />
               )}
             </>
           )}
@@ -1100,6 +1104,158 @@ const SetpointsTab: React.FC<{
           <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem', flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={save} disabled={saving}>
               {saving ? 'Saving…' : '💾 Save Setpoints'}
+            </button>
+            <button className="btn" onClick={load} disabled={loading} style={{ opacity: 0.7 }}>
+              ↺ Reset
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
+// DYNAMICS TAB — FOPDT process dynamics parameters
+// ───────────────────────────────────────────────────────────────────────────────
+const DynamicsTab: React.FC<{
+  showToast: (msg: string, ok?: boolean) => void
+}> = ({ showToast }) => {
+  const { primary } = useBranding()
+  const [columnTag, setColumnTag] = useState('DC4')
+  const [params,    setParams]    = useState<FopdtEntry[]>([])
+  const [horizons,  setHorizons]  = useState<number[]>([300, 900, 1800])
+  const [loading,   setLoading]   = useState(true)
+  const [saving,    setSaving]    = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fopdtConfigApi.get(columnTag)
+      setParams(res.data.params)
+      setHorizons(res.data.horizons)
+    } catch {
+      showToast('Failed to load dynamics config', false)
+    } finally {
+      setLoading(false)
+    }
+  }, [columnTag, showToast])
+
+  useEffect(() => { load() }, [load])
+
+  const updateParam = (i: number, field: keyof FopdtEntry, raw: string) => {
+    setParams(prev => {
+      const next = [...prev]
+      const num  = parseFloat(raw)
+      next[i] = { ...next[i], [field]: isNaN(num) ? raw : num } as FopdtEntry
+      return next
+    })
+  }
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await fopdtConfigApi.update(params, horizons, columnTag)
+      showToast('Dynamics config saved', true)
+    } catch {
+      showToast('Save failed', false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const numInput: React.CSSProperties = {
+    background: 'rgba(255,255,255,0.05)',
+    border: '1px solid rgba(255,255,255,0.1)',
+    borderRadius: 4,
+    color: 'var(--text)',
+    padding: '0.25rem 0.4rem',
+    fontSize: '0.78rem',
+    width: '100%',
+  }
+
+  return (
+    <section>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+        <h2 style={{ fontSize: '1rem', fontWeight: 700, color: primary, margin: 0 }}>
+          📈 FOPDT Process Dynamics
+        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', color: 'var(--text-low)' }}>
+          Column:
+          <input value={columnTag} onChange={e => setColumnTag(e.target.value.toUpperCase())}
+            style={{ ...numInput, width: 80 }} />
+        </div>
+      </div>
+
+      <div style={{ fontSize: '0.78rem', color: 'var(--text-low)', marginBottom: '1rem', lineHeight: 1.6 }}>
+        These parameters define how each controller output (OP) change propagates to the
+        process variable (PV) over time. Used by the post-apply FOPDT simulation so
+        engineers can verify actual DCS readings against predictions.
+        <br />
+        <strong style={{ color: 'var(--text)' }}>K</strong> = process gain (PV unit per % OP) &nbsp;|&nbsp;
+        <strong style={{ color: 'var(--text)' }}>tau</strong> = time constant (s, 63% settled at theta+tau) &nbsp;|&nbsp;
+        <strong style={{ color: 'var(--text)' }}>theta</strong> = dead time (s, delay before any response) &nbsp;|&nbsp;
+        <strong style={{ color: 'var(--text)' }}>PV nom</strong> = DCS reading at 50% OP baseline
+      </div>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-low)', fontSize: '0.85rem' }}>Loading…</div>
+      ) : (
+        <>
+          <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+              <thead>
+                <tr style={{ color: 'var(--text-low)', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                  {['OP Tag', 'PV Tag', 'Description', 'Unit', 'K', 'tau (s)', 'theta (s)', 'PV nom'].map(h => (
+                    <th key={h} style={{ padding: '0.4rem 0.5rem', textAlign: 'left', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {params.map((p, i) => (
+                  <tr key={p.op_tag} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <td style={{ padding: '0.4rem 0.5rem', fontFamily: 'var(--font-mono)', color: primary, fontSize: '0.75rem', whiteSpace: 'nowrap' }}>{p.op_tag}</td>
+                    <td style={{ padding: '0.4rem 0.5rem', fontFamily: 'var(--font-mono)', color: 'var(--accent)', fontSize: '0.75rem' }}>{p.pv_tag}</td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
+                      <input value={p.desc} onChange={e => updateParam(i, 'desc', e.target.value)} style={numInput} />
+                    </td>
+                    <td style={{ padding: '0.4rem 0.5rem' }}>
+                      <input value={p.unit} onChange={e => updateParam(i, 'unit', e.target.value)} style={{ ...numInput, width: 60 }} />
+                    </td>
+                    {(['K', 'tau', 'theta', 'pv_nom'] as const).map(field => (
+                      <td key={field} style={{ padding: '0.4rem 0.5rem' }}>
+                        <input type="number" step="any"
+                          value={p[field] as number}
+                          onChange={e => updateParam(i, field, e.target.value)}
+                          style={{ ...numInput, width: 80 }} />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Horizons */}
+          <div style={{ marginBottom: '1rem' }}>
+            <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text)', marginBottom: '0.4rem' }}>
+              Prediction horizons (seconds)
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {horizons.map((h, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.78rem', color: 'var(--text-low)' }}>
+                  <span>H{i + 1}:</span>
+                  <input type="number" value={h}
+                    onChange={e => setHorizons(prev => { const n = [...prev]; n[i] = parseInt(e.target.value) || h; return n })}
+                    style={{ ...numInput, width: 70 }} />
+                  <span style={{ fontSize: '0.7rem' }}>({Math.round(h / 60)} min)</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-primary" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : '💾 Save Dynamics Config'}
             </button>
             <button className="btn" onClick={load} disabled={loading} style={{ opacity: 0.7 }}>
               ↺ Reset

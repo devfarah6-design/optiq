@@ -454,7 +454,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                         ✓ Setpoints logged as applied — monitor the live charts above
                       </div>
 
-                      {/* What the simulation means */}
+                      {/* FOPDT process trajectory */}
                       {simulation.length > 0 && (
                         <div style={{
                           borderTop: '1px solid rgba(0,232,122,0.2)',
@@ -465,81 +465,105 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                               fontSize: '0.72rem', fontWeight: 700, color: 'var(--text)',
                               marginBottom: '0.2rem',
                             }}>
-                              Model-predicted response
+                              FOPDT process response prediction
                             </div>
                             <div style={{ fontSize: '0.68rem', color: 'var(--text-low)', lineHeight: 1.5 }}>
-                              Each row is one prediction cycle (~3 s). If the process responds as expected,
-                              your live charts should trend toward these values within 1–2 minutes.
-                              Arrows show improvement vs. the state when you applied.
+                              Predicted using First-Order Plus Dead Time dynamics per controller.
+                              Check your DCS at each time mark — if readings match, the model is tracking.
+                              Large deviation means a disturbance or recalculation is needed.
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                            {/* Header row */}
-                            <div style={{
-                              display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr',
-                              fontSize: '0.62rem', color: 'var(--text-low)', fontWeight: 700,
-                              textTransform: 'uppercase', letterSpacing: '0.06em',
-                              padding: '0 0.5rem',
-                            }}>
-                              <span>Cycle</span>
-                              <span>Energy (kJ/kg)</span>
-                              <span>Purity (%)</span>
-                              <span>Butane (m³/h)</span>
-                            </div>
-
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                             {simulation.map(s => (
                               <div key={s.step} style={{
-                                display: 'grid',
-                                gridTemplateColumns: '3.5rem 1fr 1fr 1fr',
-                                alignItems: 'center',
-                                gap: '0.4rem',
-                                fontSize: '0.75rem',
-                                fontFamily: 'var(--font-mono)',
-                                padding: '0.35rem 0.5rem',
                                 background: 'rgba(0,232,122,0.04)',
-                                borderRadius: 4,
-                                border: '1px solid rgba(0,232,122,0.1)',
+                                borderRadius: 6,
+                                border: '1px solid rgba(0,232,122,0.12)',
+                                padding: '0.5rem 0.6rem',
                               }}>
-                                <span style={{ color: 'var(--text-low)', fontSize: '0.7rem' }}>
-                                  +{s.step} cycle{s.step > 1 ? 's' : ''}
-                                </span>
-                                <span>
-                                  <span style={{ color: 'var(--primary)' }}>{s.energy.toFixed(1)}</span>
-                                  {s.energy_delta_pct > 0.05 && (
-                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 4 }}>
-                                      ↓{s.energy_delta_pct.toFixed(1)}%
+                                {/* Time label + KPIs */}
+                                <div style={{
+                                  display: 'grid',
+                                  gridTemplateColumns: '4rem 1fr 1fr 1fr',
+                                  alignItems: 'center',
+                                  fontSize: '0.75rem',
+                                  fontFamily: 'var(--font-mono)',
+                                  marginBottom: Object.keys(s.tag_values || {}).length > 0 ? '0.4rem' : 0,
+                                }}>
+                                  <span style={{
+                                    color: primary, fontWeight: 700, fontSize: '0.72rem',
+                                  }}>
+                                    {s.label || `+${s.step}`}
+                                  </span>
+                                  <span>
+                                    <span style={{ color: 'var(--primary)' }}>{s.energy.toFixed(1)}</span>
+                                    {s.energy_delta_pct > 0.1 && (
+                                      <span style={{ color: 'var(--success)', fontSize: '0.62rem', marginLeft: 3 }}>
+                                        -{s.energy_delta_pct.toFixed(1)}%
+                                      </span>
+                                    )}
+                                    {s.energy_delta_pct < -0.1 && (
+                                      <span style={{ color: '#F87171', fontSize: '0.62rem', marginLeft: 3 }}>
+                                        +{Math.abs(s.energy_delta_pct).toFixed(1)}%
+                                      </span>
+                                    )}
+                                    <span style={{ color: 'var(--text-low)', fontSize: '0.6rem', marginLeft: 2 }}>kJ/kg</span>
+                                  </span>
+                                  <span>
+                                    <span style={{ color: '#A78BFA' }}>{s.purity.toFixed(2)}%</span>
+                                    {s.purity_delta_pct > 0.02 && (
+                                      <span style={{ color: 'var(--success)', fontSize: '0.62rem', marginLeft: 3 }}>
+                                        +{s.purity_delta_pct.toFixed(2)}%
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span style={{ color: '#FCD34D' }}>
+                                    {s.butane.toFixed(3)}
+                                    <span style={{ color: 'var(--text-low)', fontSize: '0.6rem', marginLeft: 2 }}>m³/h</span>
+                                  </span>
+                                </div>
+
+                                {/* DCS-readable PV values for engineer to verify */}
+                                {Object.keys(s.tag_values || {}).length > 0 && (
+                                  <div style={{
+                                    display: 'flex', flexWrap: 'wrap', gap: '0.3rem',
+                                    borderTop: '1px solid rgba(255,255,255,0.05)',
+                                    paddingTop: '0.3rem',
+                                  }}>
+                                    {Object.entries(s.tag_values)
+                                      .filter(([tag]) => !tag.endsWith('.OP'))
+                                      .map(([tag, val]) => (
+                                        <span key={tag} style={{
+                                          fontSize: '0.63rem',
+                                          fontFamily: 'var(--font-mono)',
+                                          color: 'var(--text-low)',
+                                          background: 'rgba(255,255,255,0.04)',
+                                          borderRadius: 3,
+                                          padding: '0.1rem 0.3rem',
+                                        }}>
+                                          <span style={{ color: 'var(--accent)' }}>{tag}</span>
+                                          {' '}{typeof val === 'number' ? val.toFixed(1) : val}
+                                        </span>
+                                      ))}
+                                    <span style={{
+                                      fontSize: '0.6rem', color: 'var(--text-low)',
+                                      alignSelf: 'center', fontStyle: 'italic',
+                                    }}>
+                                      verify on DCS
                                     </span>
-                                  )}
-                                  {s.energy_delta_pct < -0.05 && (
-                                    <span style={{ color: '#F87171', fontSize: '0.65rem', marginLeft: 4 }}>
-                                      ↑{Math.abs(s.energy_delta_pct).toFixed(1)}%
-                                    </span>
-                                  )}
-                                </span>
-                                <span>
-                                  <span style={{ color: '#A78BFA' }}>{s.purity.toFixed(2)}%</span>
-                                  {s.purity_delta_pct > 0.02 && (
-                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 4 }}>
-                                      ↑{s.purity_delta_pct.toFixed(2)}%
-                                    </span>
-                                  )}
-                                  {s.purity_delta_pct < -0.02 && (
-                                    <span style={{ color: '#F87171', fontSize: '0.65rem', marginLeft: 4 }}>
-                                      ↓{Math.abs(s.purity_delta_pct).toFixed(2)}%
-                                    </span>
-                                  )}
-                                </span>
-                                <span style={{ color: '#FCD34D' }}>{s.butane.toFixed(3)}</span>
+                                  </div>
+                                )}
                               </div>
                             ))}
                           </div>
 
                           <div style={{
-                            fontSize: '0.65rem', color: 'var(--text-low)', marginTop: '0.55rem',
+                            fontSize: '0.62rem', color: 'var(--text-low)', marginTop: '0.5rem',
                             fontStyle: 'italic',
                           }}>
-                            These are model predictions, not live measurements. Verify on the charts above.
+                            FOPDT model prediction. If DCS readings deviate significantly,
+                            use "Update Recommendation" to recalculate with current conditions.
                           </div>
                         </div>
                       )}

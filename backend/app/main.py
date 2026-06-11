@@ -21,7 +21,7 @@ from app import models, schemas, auth, dependencies
 from app.database import engine, SessionLocal
 from app.config import settings
 from app.prediction import predict_energy_purity
-from app.optimizer import optimize, simulate_after_apply
+from app.optimizer import optimize, simulate_after_apply, check_process_tracking, DEFAULT_FOPDT_PARAMS, DEFAULT_HORIZONS
 from app.websocket_manager import manager as ws_manager
 
 # ── Logging ────────────────────────────────────────────────────────────────────
@@ -167,7 +167,8 @@ def _migrate_columns():
         ("predictions",          "is_outlier",    "BOOLEAN DEFAULT FALSE"),
         ("predictions",          "outlier_score", "FLOAT DEFAULT 0.0"),
         ("predictions",          "model_type",    "TEXT DEFAULT 'xgboost'"),
-        ("optimization_results", "column_tag",    "TEXT DEFAULT 'DC4'"),
+        ("optimization_results", "column_tag",          "TEXT DEFAULT 'DC4'"),
+        ("optimization_results", "predicted_trajectory", "JSONB"),
     ]
     for table, col, defn in MISSING_COLS:
         try:
@@ -676,13 +677,25 @@ def apply_recommendation(
                 },
                 ip=request.client.host if request.client else None, status_code=200)
 
-    # Simulate 3-step process trajectory after applying
+    # FOPDT-based post-apply simulation
     simulation = []
     try:
         if rec.recommended_setpoints:
-            simulation = simulate_after_apply(list(rec.recommended_setpoints))
+            fopdt_cfg = _get_fopdt_config(rec.column_tag, db)
+            simulation = simulate_after_apply(
+                recommended_ops = list(rec.recommended_setpoints),
+                current_ops     = list(rec.current_setpoints) if rec.current_setpoints else None,
+                fopdt_params    = fopdt_cfg["params"],
+                horizons        = fopdt_cfg.get("horizons"),
+            )
+            # Persist trajectory so tracking endpoint can compare later
+            try:
+                rec.predicted_trajectory = simulation
+                db.commit()
+            except Exception:
+                db.rollback()
     except Exception as sim_e:
-        logger.warning(f"Apply simulation failed: {sim_e}")
+        logger.warning(f"FOPDT simulation failed: {sim_e}")
 
     return schemas.ApplyRecommendationOut(
         result_id           = result_id,
@@ -853,6 +866,109 @@ def delete_company(
                 detail={"company_id": company_id},
                 ip=request.client.host if request.client else None, status_code=204)
     return None
+
+
+# ── FOPDT Process Dynamics Config ─────────────────────────────────────────────
+def _get_fopdt_config(column_tag: str, db: Session) -> dict:
+    """Return FOPDT params + horizons for column. Falls back to DC4 defaults."""
+    col = db.query(models.DistillationColumn).filter(
+        models.DistillationColumn.tag == column_tag,
+        models.DistillationColumn.is_active == True,
+    ).first()
+    if col and col.config and "fopdt_params" in col.config:
+        return {
+            "params":   col.config["fopdt_params"],
+            "horizons": col.config.get("fopdt_horizons", DEFAULT_HORIZONS),
+        }
+    return {"params": DEFAULT_FOPDT_PARAMS, "horizons": DEFAULT_HORIZONS}
+
+
+@app.get("/config/fopdt", response_model=schemas.FopdtConfigOut, tags=["config"])
+def get_fopdt_config(
+    column_tag: str = "DC4",
+    db: Session = Depends(dependencies.get_db),
+    _current_user=Depends(dependencies.get_current_user),
+):
+    """Return FOPDT process dynamics config for the given column."""
+    cfg = _get_fopdt_config(column_tag, db)
+    return schemas.FopdtConfigOut(
+        column_tag=column_tag,
+        params=cfg["params"],
+        horizons=cfg["horizons"],
+    )
+
+
+@app.put("/config/fopdt", response_model=schemas.FopdtConfigOut, tags=["config"])
+def update_fopdt_config(
+    request:    Request,
+    data:       schemas.FopdtConfigUpdate,
+    column_tag: str = "DC4",
+    db:         Session = Depends(dependencies.get_db),
+    current_user=Depends(dependencies.require_company_admin),
+):
+    """Company admin: update FOPDT process dynamics parameters."""
+    col = db.query(models.DistillationColumn).filter(
+        models.DistillationColumn.tag == column_tag
+    ).first()
+    new_params   = [e.model_dump() for e in data.params]
+    new_horizons = data.horizons or DEFAULT_HORIZONS
+    if col:
+        existing = dict(col.config or {})
+        existing["fopdt_params"]   = new_params
+        existing["fopdt_horizons"] = new_horizons
+        col.config = existing
+        db.commit()
+    write_audit(db, "UPDATE_FOPDT_CONFIG", user=current_user,
+                endpoint=f"PUT /config/fopdt?column_tag={column_tag}",
+                detail={"column_tag": column_tag, "n_params": len(new_params)},
+                ip=request.client.host if request.client else None, status_code=200)
+    return schemas.FopdtConfigOut(
+        column_tag=column_tag, params=data.params, horizons=new_horizons
+    )
+
+
+@app.post("/recommendations/{result_id}/tracking",
+          response_model=schemas.TrackingOut, tags=["prediction"])
+def check_recommendation_tracking(
+    result_id:         int,
+    actual_tag_values: dict,
+    db:                Session = Depends(dependencies.get_db),
+    _current_user=Depends(dependencies.get_current_user),
+):
+    """
+    Check if the process is responding as predicted by the FOPDT model.
+
+    Call at +5 min / +15 min / +30 min after apply with current DCS readings.
+    Returns tracking score, per-tag deviation, and whether re-optimisation
+    is recommended.
+    """
+    rec = db.query(models.OptimizationResult).get(result_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if not rec.applied or not rec.applied_at:
+        raise HTTPException(status_code=400, detail="Recommendation not yet applied")
+
+    elapsed_s = (datetime.now(timezone.utc) - rec.applied_at).total_seconds()
+    fopdt_cfg = _get_fopdt_config(rec.column_tag, db)
+    trajectory = getattr(rec, "predicted_trajectory", None) or []
+
+    result = check_process_tracking(
+        predicted_trajectory = trajectory,
+        actual_tag_values    = actual_tag_values,
+        elapsed_s            = elapsed_s,
+        fopdt_params         = fopdt_cfg["params"],
+    )
+
+    return schemas.TrackingOut(
+        result_id            = result_id,
+        elapsed_s            = elapsed_s,
+        tracking_ok          = result["tracking_ok"],
+        tracking_score       = result["tracking_score"],
+        worst_deviation_pct  = result["worst_deviation_pct"],
+        deviations           = result["deviations"],
+        message              = result["message"],
+        suggest_reoptimize   = result["suggest_reoptimize"],
+    )
 
 
 # ── Setpoint Config (admin-customisable SP values) ────────────────────────────
@@ -1036,7 +1152,7 @@ def delete_site(
     return None
 
 
-# ── Distillation Columns ───────────────────────────────────────────────────────
+# -- Distillation Columns ------------------------------------------------------
 @app.get("/columns", response_model=list[schemas.ColumnOut], tags=["columns"])
 def list_columns(
     site_id: Optional[int] = None,
@@ -1068,7 +1184,6 @@ def create_column(
     db: Session = Depends(dependencies.get_db),
     current_user=Depends(dependencies.require_company_admin),
 ):
-    # Verify site ownership for company_admin
     if current_user.role == models.UserRole.COMPANY_ADMIN:
         site = db.query(models.Site).get(col_in.site_id)
         if not site or site.company_id != current_user.company_id:
@@ -1130,7 +1245,7 @@ def delete_column(
     return None
 
 
-# ── Statistics ─────────────────────────────────────────────────────────────────
+# -- Statistics ----------------------------------------------------------------
 @app.get("/stats", response_model=schemas.StatsOut, tags=["stats"])
 def get_stats(
     column_tag:   str = "DC4",
@@ -1142,4 +1257,63 @@ def get_stats(
     from sqlalchemy import func
     cutoff = datetime.now(timezone.utc) - timedelta(hours=period_hours)
 
-    pred_q = d
+    pred_q = db.query(models.Prediction).filter(
+        models.Prediction.column_tag == column_tag,
+        models.Prediction.timestamp >= cutoff,
+    )
+    total_pred = pred_q.count()
+
+    agg = pred_q.with_entities(
+        func.avg(models.Prediction.energy).label("avg_e"),
+        func.min(models.Prediction.energy).label("min_e"),
+        func.max(models.Prediction.energy).label("max_e"),
+        func.avg(models.Prediction.purity).label("avg_p"),
+        func.min(models.Prediction.purity).label("min_p"),
+        func.max(models.Prediction.purity).label("max_p"),
+    ).first()
+
+    opt_q = db.query(models.OptimizationResult).filter(
+        models.OptimizationResult.column_tag == column_tag,
+        models.OptimizationResult.requested_at >= cutoff,
+    )
+    total_opt     = opt_q.count()
+    total_applied = opt_q.filter(models.OptimizationResult.applied == True).count()
+
+    applied_recs = opt_q.filter(models.OptimizationResult.applied == True).all()
+    avg_saving   = 0.0
+    if applied_recs:
+        savings    = [r.energy_savings_pct for r in applied_recs if r.energy_savings_pct is not None]
+        avg_saving = sum(savings) / len(savings) if savings else 0.0
+
+    alert_q        = db.query(models.Alert).filter(models.Alert.timestamp >= cutoff)
+    total_alerts   = alert_q.count()
+    critical_alerts = alert_q.filter(models.Alert.severity == models.AlertSeverity.CRITICAL).count()
+
+    def safe(v, default=0.0):
+        return float(v) if v is not None else default
+
+    return schemas.StatsOut(
+        column_tag=column_tag,
+        period_hours=period_hours,
+        total_predictions=total_pred,
+        avg_energy=safe(agg.avg_e if agg else None),
+        min_energy=safe(agg.min_e if agg else None),
+        max_energy=safe(agg.max_e if agg else None),
+        avg_purity=safe(agg.avg_p if agg else None),
+        min_purity=safe(agg.min_p if agg else None),
+        max_purity=safe(agg.max_p if agg else None),
+        total_optimizations=total_opt,
+        total_applied=total_applied,
+        avg_energy_saving=avg_saving,
+        total_alerts=total_alerts,
+        critical_alerts=critical_alerts,
+    )
+
+
+# -- Branding ------------------------------------------------------------------
+@app.get("/branding/{slug}", response_model=schemas.CompanyOut, tags=["branding"])
+def get_branding(slug: str, db: Session = Depends(dependencies.get_db)):
+    company = db.query(models.Company).filter_by(slug=slug, is_active=True).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return company

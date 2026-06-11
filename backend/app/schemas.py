@@ -330,15 +330,7 @@ class SetpointConfigUpdate(BaseModel):
     setpoints: List[SetpointEntry]
 
 
-# ── App Config (key/value store)
-
+# -- App Config (key/value store) -------------------------------------------
 class ConfigSet(BaseModel):
     key:   str
     value: Any
-�─────────────────────────
-class ConfigSet(BaseModel):
-    key:   str
-    value: Any
-
-
-# ── Pareto (legacy) ────

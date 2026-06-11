@@ -15,13 +15,16 @@ api.interceptors.request.use(cfg => {
   return cfg
 })
 
-// 401 → clear token and redirect to login
+// 401 → clear token. Only redirect if NOT already on /login —
+// prevents infinite reload loop (LiveDataProvider mounts on every page).
 api.interceptors.response.use(
   res => res,
   err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('optiq_token')
-      window.location.href = '/login'
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login'
+      }
     }
     return Promise.reject(err)
   }

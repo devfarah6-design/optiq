@@ -2,11 +2,12 @@
  * LiveDataContext — persistent WebSocket + live prediction state.
  *
  * Lives at the App level so it never unmounts on navigation.
- * Dashboard (and any other page) reads from this context instead of
- * managing its own WS connection.
+ * Only starts polling/WS AFTER the user is authenticated.
+ * Stops and cleans up cleanly on logout.
  */
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react'
 import { alertApi, predictApi } from '@/api/client'
+import { useAuth } from '@/auth/AuthContext'
 import type { Prediction, Alert, OptimizeResult, SimulationStep } from '@/api/client'
 
 interface DataPoint { ts: number; energy: number; purity: number }
@@ -34,6 +35,8 @@ interface LiveDataState {
 const LiveDataContext = createContext<LiveDataState | null>(null)
 
 export const LiveDataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user, loading: authLoading } = useAuth()
+
   const [current,        setCurrent]        = useState<LiveDataState['current']>(null)
   const [history,        setHistory]        = useState<DataPoint[]>([])
   const [alerts,         setAlerts]         = useState<Alert[]>([])
@@ -41,7 +44,12 @@ export const LiveDataProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [recommendation, setRecommendation] = useState<OptimizeResult | null>(null)
   const [applied,        setApplied]        = useState(false)
   const [simulation,     setSimulation]     = useState<SimulationStep[]>([])
-  const wsRef = useRef<WebSocket | null>(null)
+
+  const wsRef           = useRef<WebSocket | null>(null)
+  // Controls whether the WS reconnect loop should keep running
+  const shouldReconnect = useRef(false)
+  // Tracks whether the boot sequence has already fired for this session
+  const booted          = useRef(false)
 
   const clearRecommendation = useCallback(() => {
     setRecommendation(null)
@@ -61,10 +69,14 @@ export const LiveDataProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     try {
       const res = await predictApi.latestFromDB()
       applyPrediction(res.data)
-    } catch { /* 404 = no data yet */ }
+    } catch { /* 404 = no data yet, 401 handled by interceptor */ }
   }, [applyPrediction])
 
+  // Forward-declared so the onclose handler can reference it
+  const connectRef = useRef<() => void>(() => {})
+
   const connect = useCallback(() => {
+    if (!shouldReconnect.current) return
     const url = getWsUrl()
     try {
       const ws = new WebSocket(url)
@@ -73,7 +85,8 @@ export const LiveDataProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       ws.onopen  = () => setWsStatus('connected')
       ws.onclose = () => {
         setWsStatus('disconnected')
-        setTimeout(connect, 4000)
+        // Only reconnect if we're still supposed to be connected
+        if (shouldReconnect.current) setTimeout(() => connectRef.current(), 4000)
       }
       ws.onerror = () => ws.close()
       ws.onmessage = ev => {
@@ -84,28 +97,60 @@ export const LiveDataProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           } else if (msg.type === 'new_alert') {
             setAlerts(prev => [msg.alert as Alert, ...prev.slice(0, 49)])
           }
-        } catch { /* ignore */ }
+        } catch { /* ignore malformed messages */ }
       }
     } catch {
       setWsStatus('disconnected')
-      setTimeout(connect, 4000)
+      if (shouldReconnect.current) setTimeout(() => connectRef.current(), 4000)
     }
   }, [applyPrediction])
 
-  // Boot once — never re-runs on navigation
+  // Keep the ref in sync so onclose closures always call the latest connect
+  useEffect(() => { connectRef.current = connect }, [connect])
+
+  // ── Boot when authenticated, stop when logged out ──────────────────────────
   useEffect(() => {
+    if (authLoading) return  // wait for AuthContext to resolve
+
+    if (!user) {
+      // Logged out (or never logged in) — stop everything
+      shouldReconnect.current = false
+      if (wsRef.current) {
+        wsRef.current.onclose = null  // prevent the onclose from scheduling a reconnect
+        wsRef.current.close()
+        wsRef.current = null
+      }
+      booted.current = false
+      setWsStatus('disconnected')
+      return
+    }
+
+    // User is authenticated
+    if (booted.current) return  // already running — don't double-boot
+    booted.current = true
+    shouldReconnect.current = true
+
+    // Load initial data
     alertApi.list().then(r => setAlerts(r.data)).catch(() => {})
     fetchLatest()
     connect()
-    return () => { wsRef.current?.close() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // HTTP polling when WS is down
+    return () => {
+      // Cleanup on unmount (shouldn't happen since this lives at App level)
+      shouldReconnect.current = false
+      if (wsRef.current) {
+        wsRef.current.onclose = null
+        wsRef.current.close()
+      }
+    }
+  }, [user, authLoading, fetchLatest, connect])
+
+  // ── HTTP polling fallback when WS is disconnected ─────────────────────────
   useEffect(() => {
-    if (wsStatus === 'connected') return
+    if (!user || wsStatus === 'connected') return
     const id = setInterval(fetchLatest, 5000)
     return () => clearInterval(id)
-  }, [wsStatus, fetchLatest])
+  }, [wsStatus, fetchLatest, user])
 
   return (
     <LiveDataContext.Provider value={{

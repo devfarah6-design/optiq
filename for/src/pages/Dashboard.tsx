@@ -260,28 +260,34 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
   const primary = company?.primary_color ?? '#00D9FF'
   const accent  = company?.accent_color  ?? '#FFD700'
 
-  const chartData = {
-    labels: history.map((_, i) => i),
-    datasets: [
-      {
-        label: 'Energy (kg/kg)', data: history.map(d => d.energy),
-        borderColor: primary, backgroundColor: `${primary}18`,
-        fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
-      },
-      {
-        label: 'Purity (%)', data: history.map(d => d.purity),
-        borderColor: accent, backgroundColor: `${accent}12`,
-        fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
-      },
-    ],
+  const labels = history.map((_, i) => i)
+
+  const energyChartData = {
+    labels,
+    datasets: [{
+      label: 'Energy (kg steam / kg butane)',
+      data: history.map(d => d.energy),
+      borderColor: primary, backgroundColor: `${primary}18`,
+      fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
+    }],
   }
 
-  const chartOpts = {
+  const purityChartData = {
+    labels,
+    datasets: [{
+      label: 'Purity (%mol)',
+      data: history.map(d => d.purity),
+      borderColor: accent, backgroundColor: `${accent}12`,
+      fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
+    }],
+  }
+
+  const baseChartOpts = {
     responsive: true, maintainAspectRatio: false,
     animation: { duration: 300 },
     interaction: { mode: 'index' as const, intersect: false },
     plugins: {
-      legend: { labels: { color: '#7A9BB5', font: { size: 11 } } },
+      legend: { display: false },
       tooltip: {
         backgroundColor: 'rgba(13,23,41,0.95)',
         borderColor: 'rgba(0,217,255,0.2)', borderWidth: 1,
@@ -294,6 +300,22 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
         grid: { color: 'rgba(255,255,255,0.04)' },
         ticks: { color: '#7A9BB5', font: { size: 10 }, callback: (v: any) => v.toFixed(2) },
       },
+    },
+  }
+
+  const energyChartOpts = {
+    ...baseChartOpts,
+    scales: {
+      ...baseChartOpts.scales,
+      y: { ...baseChartOpts.scales.y, ticks: { ...baseChartOpts.scales.y.ticks, callback: (v: any) => v.toFixed(2) } },
+    },
+  }
+
+  const purityChartOpts = {
+    ...baseChartOpts,
+    scales: {
+      ...baseChartOpts.scales,
+      y: { ...baseChartOpts.scales.y, ticks: { ...baseChartOpts.scales.y.ticks, callback: (v: any) => `${v.toFixed(1)}%` } },
     },
   }
 
@@ -358,15 +380,15 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
               color={unacked > 0 ? 'var(--error)' : 'var(--success)'} delay={180} />
           </div>
 
-          {/* Chart + Advisor */}
+          {/* Charts + Advisor */}
           <div className="dashboard-main-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 360px', gap: '1rem', marginBottom: '1.5rem' }}>
-            <div className="card">
-              <div className="flex justify-between items-center mb-4">
-                <div>
-                  <div className="font-semibold">Process Trends</div>
-                  <div className="text-xs text-muted">Continuous history · live update {wsStatus === 'connected' ? 'every 3s via WS' : 'every 5s via HTTP'}</div>
-                </div>
-                {wsStatus !== 'connected' && (
+
+            {/* Left column: two stacked charts */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+
+              {/* WS status badge — shown above charts when not connected */}
+              {wsStatus !== 'connected' && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <div className="badge" style={{
                     background: wsStatus === 'connecting' ? 'rgba(0,217,255,0.12)' : 'rgba(255,69,96,0.12)',
                     color:      wsStatus === 'connecting' ? 'var(--primary)' : 'var(--error)',
@@ -375,26 +397,71 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                   }}>
                     {wsStatus === 'connecting' ? '⟳ Backend starting…' : '↻ HTTP polling fallback'}
                   </div>
-                )}
-              </div>
-              <div className="chart-wrap" style={{ position: 'relative' }}>
-                <Line data={chartData} options={chartOpts} />
-                {history.length === 0 && (
-                  <div style={{
-                    position: 'absolute', inset: 0,
-                    display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
-                    background: 'rgba(13,27,42,0.7)', borderRadius: 'var(--r-md)',
-                  }}>
-                    <div className="spinner" style={{ width: 28, height: 28 }} />
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-mid)' }}>
-                      {wsStatus === 'connecting'
-                        ? 'Backend is starting — data arriving shortly…'
-                        : 'Fetching data…'}
-                    </div>
+                </div>
+              )}
+
+              {/* Energy chart */}
+              <div className="card">
+                <div className="flex justify-between items-center mb-3">
+                  <div>
+                    <div className="font-semibold" style={{ color: primary }}>Energy Consumption</div>
+                    <div className="text-xs text-muted">kg steam / kg butane · continuous history</div>
                   </div>
-                )}
+                  {current && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 700, color: primary }}>
+                      {current.energy.toFixed(4)}
+                    </div>
+                  )}
+                </div>
+                <div className="chart-wrap" style={{ position: 'relative' }}>
+                  <Line data={energyChartData} options={energyChartOpts} />
+                  {history.length === 0 && (
+                    <div style={{
+                      position: 'absolute', inset: 0,
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                      background: 'rgba(13,27,42,0.7)', borderRadius: 'var(--r-md)',
+                    }}>
+                      <div className="spinner" style={{ width: 24, height: 24 }} />
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-mid)' }}>
+                        {wsStatus === 'connecting' ? 'Backend starting…' : 'Fetching data…'}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
+
+              {/* Purity chart */}
+              <div className="card">
+                <div className="flex justify-between items-center mb-3">
+                  <div>
+                    <div className="font-semibold" style={{ color: accent }}>Butane Purity</div>
+                    <div className="text-xs text-muted">%mol · continuous history</div>
+                  </div>
+                  {current && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.9rem', fontWeight: 700, color: accent }}>
+                      {current.purity.toFixed(2)}%
+                    </div>
+                  )}
+                </div>
+                <div className="chart-wrap" style={{ position: 'relative' }}>
+                  <Line data={purityChartData} options={purityChartOpts} />
+                  {history.length === 0 && (
+                    <div style={{
+                      position: 'absolute', inset: 0,
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: 'center', gap: '0.5rem',
+                      background: 'rgba(13,27,42,0.7)', borderRadius: 'var(--r-md)',
+                    }}>
+                      <div className="spinner" style={{ width: 24, height: 24 }} />
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-mid)' }}>
+                        {wsStatus === 'connecting' ? 'Backend starting…' : 'Fetching data…'}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
             </div>
 
             {/* AI Advisor */}
@@ -612,6 +679,66 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
             </div>
             {alerts.length === 0
               ? <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--text-low)', fontSize: '0.875rem' }}>
+                  ✓ No alerts detected
+                </div>
+              : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 380, overflowY: 'auto' }}>
+                  {alerts.slice(0, 15).map(a => <AlertRow key={a.id} alert={a} />)}
+                </div>
+            }
+          </div>
+
+          <div style={{ textAlign: 'center', marginTop: '2rem', paddingBottom: '1rem' }}>
+            <div className="optiq-badge"><span>OPTIQ</span> Industrial AI Platform · v2.0</div>
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+// ── Sub-components ─────────────────────────────────────────────────────────────
+const KpiCard: React.FC<{
+  label: string; value: string; unit: string; color?: string; delay?: number
+}> = ({ label, value, unit, color = 'var(--primary)', delay = 0 }) => (
+  <div className="kpi-card animate-fade-up" style={{ animationDelay: `${delay}ms` }}>
+    <div className="kpi-label">{label}</div>
+    <div className="kpi-value" style={{ color }}>{value}</div>
+    <div className="kpi-unit">{unit}</div>
+  </div>
+)
+
+const Metric: React.FC<{ label: string; value: string; positive?: boolean }> = ({ label, value, positive }) => (
+  <div>
+    <div className="text-xs text-muted mb-1">{label}</div>
+    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.95rem', fontWeight: 700,
+                  color: positive ? 'var(--success)' : 'var(--text-hi)' }}>
+      {value}
+    </div>
+  </div>
+)
+
+const AlertRow: React.FC<{ alert: Alert }> = ({ alert: a }) => (
+  <div className={`alert-row ${a.severity}`} style={{ opacity: a.acknowledged ? 0.5 : 1 }}>
+    <span style={{ fontSize: '1rem', flexShrink: 0 }}>
+      {a.severity === 'critical' ? '⛔' : a.severity === 'warning' ? '⚠️' : 'ℹ️'}
+    </span>
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="font-semibold text-sm truncate">{a.tag_name} · {a.alert_type.replace(/_/g, ' ')}</div>
+      <div className="text-xs text-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {a.description}
+      </div>
+    </div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4, flexShrink: 0 }}>
+      <div className={`badge badge-${a.severity}`}>{a.severity}</div>
+      <div className="text-xs text-lo" style={{ fontFamily: 'var(--font-mono)' }}>
+        {new Date(a.timestamp).toLocaleTimeString()}
+      </div>
+    </div>
+  </div>
+)
+
+export default Dashboard
+m', textAlign: 'center', color: 'var(--text-low)', fontSize: '0.875rem' }}>
                   ✓ No alerts detected
                 </div>
               : <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: 380, overflowY: 'auto' }}>

@@ -487,8 +487,8 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     </div>
                   )}
 
-                  {/* Staleness warning */}
-                  {isStale && (
+                  {/* Staleness warning — hide once applied (operator already acted) */}
+                  {isStale && !applied && (
                     <div style={{
                       padding: '0.6rem 0.875rem',
                       background: 'rgba(245,158,11,0.08)',
@@ -497,7 +497,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       fontSize: '0.78rem', color: '#F59E0B',
                     }}>
                       {drift.stale
-                        ? `⚠ Process drifted on ${drift.driftedTags.length} tag(s) (max ${drift.maxDrift.toFixed(1)}%) — recompute recommended`
+                        ? `⚠ Process shifted on ${drift.driftedTags.length} tag(s) since last computation (max ${drift.maxDrift.toFixed(1)}%) — consider recomputing before applying`
                         : '⚠ Conditions may have changed — consider recomputing'
                       }
                     </div>
@@ -511,30 +511,53 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       borderRadius: 'var(--r-md)',
                       overflow: 'hidden',
                     }}>
+                      {/* Confirmation header */}
                       <div style={{
                         padding: '0.6rem 0.875rem',
                         fontSize: '0.8rem', color: 'var(--success)',
-                        fontWeight: 600,
+                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem',
                       }}>
-                        ✓ Confirmed applied — logged with timestamp
+                        ✓ Setpoints logged as applied — monitor the live charts above
                       </div>
 
+                      {/* What the simulation means */}
                       {simulation.length > 0 && (
                         <div style={{
                           borderTop: '1px solid rgba(0,232,122,0.2)',
                           padding: '0.75rem 0.875rem',
                         }}>
-                          <div style={{
-                            fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.07em',
-                            color: 'var(--text-low)', textTransform: 'uppercase', marginBottom: '0.6rem',
-                          }}>
-                            Projected trajectory after applying
+                          <div style={{ marginBottom: '0.6rem' }}>
+                            <div style={{
+                              fontSize: '0.72rem', fontWeight: 700, color: 'var(--text)',
+                              marginBottom: '0.2rem',
+                            }}>
+                              Model-predicted response
+                            </div>
+                            <div style={{ fontSize: '0.68rem', color: 'var(--text-low)', lineHeight: 1.5 }}>
+                              Each row is one prediction cycle (~3 s). If the process responds as expected,
+                              your live charts should trend toward these values within 1–2 minutes.
+                              Arrows show improvement vs. the state when you applied.
+                            </div>
                           </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                            {/* Header row */}
+                            <div style={{
+                              display: 'grid', gridTemplateColumns: '3.5rem 1fr 1fr 1fr',
+                              fontSize: '0.62rem', color: 'var(--text-low)', fontWeight: 700,
+                              textTransform: 'uppercase', letterSpacing: '0.06em',
+                              padding: '0 0.5rem',
+                            }}>
+                              <span>Cycle</span>
+                              <span>Energy (kJ/kg)</span>
+                              <span>Purity (%)</span>
+                              <span>Butane (m³/h)</span>
+                            </div>
+
                             {simulation.map(s => (
                               <div key={s.step} style={{
                                 display: 'grid',
-                                gridTemplateColumns: '2.2rem 1fr 1fr 1fr',
+                                gridTemplateColumns: '3.5rem 1fr 1fr 1fr',
                                 alignItems: 'center',
                                 gap: '0.4rem',
                                 fontSize: '0.75rem',
@@ -544,36 +567,45 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                 borderRadius: 4,
                                 border: '1px solid rgba(0,232,122,0.1)',
                               }}>
-                                <span style={{ color: 'var(--text-low)', fontSize: '0.68rem' }}>T+{s.step}</span>
+                                <span style={{ color: 'var(--text-low)', fontSize: '0.7rem' }}>
+                                  +{s.step} cycle{s.step > 1 ? 's' : ''}
+                                </span>
                                 <span>
-                                  <span style={{ color: 'var(--text-low)', fontSize: '0.68rem' }}>E </span>
                                   <span style={{ color: 'var(--primary)' }}>{s.energy.toFixed(1)}</span>
                                   {s.energy_delta_pct > 0.05 && (
-                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 3 }}>
+                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 4 }}>
                                       ↓{s.energy_delta_pct.toFixed(1)}%
                                     </span>
                                   )}
-                                </span>
-                                <span>
-                                  <span style={{ color: 'var(--text-low)', fontSize: '0.68rem' }}>P </span>
-                                  <span style={{ color: '#A78BFA' }}>{s.purity.toFixed(2)}%</span>
-                                  {s.purity_delta_pct > 0.02 && (
-                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 3 }}>
-                                      ↑{s.purity_delta_pct.toFixed(2)}%
+                                  {s.energy_delta_pct < -0.05 && (
+                                    <span style={{ color: '#F87171', fontSize: '0.65rem', marginLeft: 4 }}>
+                                      ↑{Math.abs(s.energy_delta_pct).toFixed(1)}%
                                     </span>
                                   )}
                                 </span>
                                 <span>
-                                  <span style={{ color: 'var(--text-low)', fontSize: '0.68rem' }}>B </span>
-                                  <span style={{ color: '#FCD34D' }}>{s.butane.toFixed(3)}</span>
+                                  <span style={{ color: '#A78BFA' }}>{s.purity.toFixed(2)}%</span>
+                                  {s.purity_delta_pct > 0.02 && (
+                                    <span style={{ color: 'var(--success)', fontSize: '0.65rem', marginLeft: 4 }}>
+                                      ↑{s.purity_delta_pct.toFixed(2)}%
+                                    </span>
+                                  )}
+                                  {s.purity_delta_pct < -0.02 && (
+                                    <span style={{ color: '#F87171', fontSize: '0.65rem', marginLeft: 4 }}>
+                                      ↓{Math.abs(s.purity_delta_pct).toFixed(2)}%
+                                    </span>
+                                  )}
                                 </span>
+                                <span style={{ color: '#FCD34D' }}>{s.butane.toFixed(3)}</span>
                               </div>
                             ))}
                           </div>
+
                           <div style={{
-                            fontSize: '0.65rem', color: 'var(--text-low)', marginTop: '0.5rem',
+                            fontSize: '0.65rem', color: 'var(--text-low)', marginTop: '0.55rem',
+                            fontStyle: 'italic',
                           }}>
-                            E = Energy (kJ/kg) · P = Purity (%) · B = Butane (m³/h)
+                            These are model predictions, not live measurements. Verify on the charts above.
                           </div>
                         </div>
                       )}

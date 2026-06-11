@@ -375,7 +375,7 @@ class ModelWrapper:
 
         # Always clip to physical limits — prevents cascade if model extrapolates
         energy = float(np.clip(energy, *_ENERGY_RANGE))
-        purity = float(np.clip        purity = float(np.clip(purity, *_PURITY_RANGE))
+        purity = float(np.clip(purity, *_PURITY_RANGE))
         butane = float(np.clip(butane, *_BUTANE_RANGE))
 
         if update_window:

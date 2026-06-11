@@ -364,7 +364,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <div className="font-semibold">Process Trends</div>
-                  <div className="text-xs text-muted">Last 60 samples · live update every {wsStatus === 'connected' ? '3s via WS' : '5s via HTTP'}</div>
+                  <div className="text-xs text-muted">Continuous history · live update {wsStatus === 'connected' ? 'every 3s via WS' : 'every 5s via HTTP'}</div>
                 </div>
                 {wsStatus !== 'connected' && (
                   <div className="badge" style={{

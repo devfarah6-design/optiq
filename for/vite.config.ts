@@ -13,16 +13,12 @@ export default defineConfig({
   },
   resolve: { alias: { '@': path.resolve(__dirname, 'src') } },
   build: {
-    outDir: 'dist',  // This is the default, but explicitly set it
+    outDir: 'dist',
     rollupOptions: {
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules/react') || id.includes('node_modules/react-dom')) {
-            return 'vendor';
-          }
-          if (id.includes('node_modules/chart.js') || id.includes('node_modules/react-chartjs-2')) {
-            return 'charts';
-          }
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          charts: ['chart.js', 'react-chartjs-2'],
         },
       },
     },

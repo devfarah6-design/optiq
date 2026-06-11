@@ -104,6 +104,9 @@ class ModelWrapper:
         # Mapping from OP col name → index in live readings vector
         self._op_indices: dict = {}
 
+        # Counter to detect sustained clipping (model stuck at boundary)
+        self._clip_streak: int = 0
+
         self._load()
 
     # ── Loading ───────────────────────────────────────────────────────────────
@@ -226,6 +229,9 @@ class ModelWrapper:
         readings : list[float] — full live sensor vector from WebSocket
         Returns  : dict with energy, purity, butane, model_type, confidence
         """
+        # Heal window BEFORE building features — prevents bad-lag cascade
+        self._sanitize_window()
+
         raw = np.array(readings, dtype=float)
         z_scores      = np.abs((raw - raw.mean()) / (raw.std() + 1e-6))
         outlier_score = float(z_scores.max())
@@ -236,10 +242,33 @@ class ModelWrapper:
         else:
             energy, purity, butane = self._dummy_predict(readings)
 
+        # Log raw output for diagnosis
+        logger.debug(
+            f"Model raw output — energy={energy:.2f}, purity={purity:.2f}, butane={butane:.2f} "
+            f"| type={self.model_type}"
+        )
+
         # Clip before storing in window (prevents cascade if model extrapolates)
+        raw_energy, raw_purity = energy, purity
         energy = float(np.clip(energy, *_ENERGY_RANGE))
         purity = float(np.clip(purity, *_PURITY_RANGE))
         butane = float(np.clip(butane, *_BUTANE_RANGE))
+
+        # Track how many consecutive predictions hit the clip minimum
+        clipped_low = (raw_energy < _ENERGY_RANGE[0] * 1.005 or
+                       raw_purity < _PURITY_RANGE[0] * 1.005)
+        if clipped_low:
+            self._clip_streak += 1
+            if self._clip_streak >= 3:
+                logger.warning(
+                    f"⚠ {self._clip_streak} consecutive low-clip predictions — "
+                    f"resetting lag window to baseline "
+                    f"(raw_energy={raw_energy:.2f}, raw_purity={raw_purity:.2f})"
+                )
+                self._reset_window()
+                self._clip_streak = 0
+        else:
+            self._clip_streak = 0
 
         # Update rolling window with this prediction
         self._pred_window.append((energy, purity, butane))
@@ -255,24 +284,40 @@ class ModelWrapper:
             'outlier_score': outlier_score,
         }
 
+    def _reset_window(self):
+        """Unconditionally reset lag window to training median baseline."""
+        self._pred_window.clear()
+        for _ in range(self.n_lags):
+            self._pred_window.append((
+                _TARGET_BASELINE['Target_Energy'],
+                _TARGET_BASELINE['Target_Purity_Pct'],
+                _TARGET_BASELINE['Target_Butane_Flow'],
+            ))
+
     def _sanitize_window(self):
-        """Reset lag window to baseline if any value has gone out of range.
-        This prevents a single bad prediction from corrupting all future ones."""
-        for e, p, b in self._pred_window:
-            if (not _ENERGY_RANGE[0] <= e <= _ENERGY_RANGE[1]
-                    or not _PURITY_RANGE[0] <= p <= _PURITY_RANGE[1]
-                    or not _BUTANE_RANGE[0] <= b <= _BUTANE_RANGE[1]):
-                logger.warning(
-                    f"⚠ Lag window corrupted (e={e:.1f}, p={p:.1f}, b={b:.2f}) — resetting to baseline"
-                )
-                self._pred_window.clear()
-                for _ in range(self.n_lags):
-                    self._pred_window.append((
-                        _TARGET_BASELINE['Target_Energy'],
-                        _TARGET_BASELINE['Target_Purity_Pct'],
-                        _TARGET_BASELINE['Target_Butane_Flow'],
-                    ))
-                return
+        """Reset lag window to baseline if values are out of range OR stuck at clip boundary.
+        A value exactly at the clip minimum means a prior prediction was clipped — this is
+        not a 'valid' process state and must be treated as corruption."""
+        energies = [w[0] for w in self._pred_window]
+        purities = [w[1] for w in self._pred_window]
+
+        # Out-of-range check (strict: value must be strictly inside the valid band)
+        out_of_range = any(
+            not (_ENERGY_RANGE[0] < e < _ENERGY_RANGE[1])
+            or not (_PURITY_RANGE[0] < p < _PURITY_RANGE[1])
+            or not (_BUTANE_RANGE[0] <= b <= _BUTANE_RANGE[1])
+            for e, p, b in self._pred_window
+        )
+
+        # Stuck-at-boundary: all lags within 0.5% of the minimum clip value
+        energy_stuck = all(e <= _ENERGY_RANGE[0] * 1.005 for e in energies)
+        purity_stuck = all(p <= _PURITY_RANGE[0] * 1.005 for p in purities)
+
+        if out_of_range or energy_stuck or purity_stuck:
+            reason = ('out-of-range' if out_of_range
+                      else f'stuck at clip boundary (energy={energies[0]:.1f}, purity={purities[0]:.1f})')
+            logger.warning(f"⚠ Lag window {reason} — resetting to baseline")
+            self._reset_window()
 
     def predict_at_op(self, op_values: dict, update_window: bool = False) -> tuple:
         """

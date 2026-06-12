@@ -69,13 +69,13 @@ const Admin: React.FC = () => {
   useEffect(() => { load() }, [load])
 
   const tabs: Array<{ id: Tab; label: string; adminOnly?: boolean }> = [
-    { id: 'companies', label: '🏢 Companies', adminOnly: true },
-    { id: 'sites',     label: '🏭 Sites' },
-    { id: 'columns',   label: '🔧 Columns' },
-    { id: 'users',     label: '👤 Users' },
-    { id: 'config',     label: '⚙️ Config' },
-    { id: 'setpoints',  label: '🎯 Setpoints' },
-    { id: 'dynamics',   label: '📈 Dynamics' },
+    { id: 'companies' as Tab, label: 'Companies', adminOnly: true },
+    { id: 'sites' as Tab, label: 'Sites' },
+    { id: 'columns' as Tab, label: 'Columns' },
+    { id: 'users' as Tab, label: 'Users' },
+    { id: 'config' as Tab, label: 'Config' },
+    { id: 'setpoints' as Tab, label: 'Setpoints' },
+    { id: 'dynamics' as Tab, label: 'Dynamics' },
   ].filter(t => !t.adminOnly || systemAdmin)
 
   return (

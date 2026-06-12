@@ -203,7 +203,7 @@ table{width:100%;border-collapse:collapse}th{background:#0D1B2A;color:white;padd
 <div class="kpi"><div class="kpi-label">Active Alerts</div>
 <div class="kpi-value" style="color:${alerts.filter(a=>!a.acknowledged).length>0?'#dc2626':'#16a34a'}">${alerts.filter(a=>!a.acknowledged).length}</div>
 <div class="kpi-unit">Unacknowledged</div></div></div>
-${recommendation ? `<h2>AI Setpoint Recommendation${applied ? ' (APPLIED ✓)' : ''}</h2>
+${recommendation ? `<h2>AI Setpoint Recommendation${applied ? ' (APPLIED)' : ''}</h2>
 <table><tr><th>Metric</th><th>Current</th><th>Recommended</th><th>Improvement</th></tr>
 <tr><td>Energy (kg/kg)</td><td>${recommendation.current_energy.toFixed(4)}</td>
 <td>${recommendation.expected_energy.toFixed(4)}</td>
@@ -369,7 +369,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     border:     `1px solid ${wsStatus === 'connecting' ? 'rgba(0,217,255,0.3)' : 'rgba(255,69,96,0.3)'}`,
                     fontSize: '0.68rem',
                   }}>
-                    {wsStatus === 'connecting' ? '⟳ Backend starting…' : '↻ HTTP polling fallback'}
+                    {wsStatus === 'connecting' ? 'Backend connecting...' : 'HTTP polling fallback'}
                   </div>
                 </div>
               )}
@@ -456,7 +456,12 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       color: isStale ? '#F59E0B' : 'var(--text-low)',
                       display: 'flex', alignItems: 'center', gap: 6,
                     }}>
-                      {isStale && <span>⚠</span>}
+                      {isStale && (
+                        <span style={{
+                          width: 6, height: 6, borderRadius: '50%',
+                          background: '#F59E0B', display: 'inline-block', flexShrink: 0,
+                        }} />
+                      )}
                       Computed {age.label}
                     </div>
                   )}
@@ -471,8 +476,8 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       fontSize: '0.78rem', color: '#F59E0B',
                     }}>
                       {drift.stale
-                        ? `⚠ Process shifted on ${drift.driftedTags.length} tag(s) since last computation (max ${drift.maxDrift.toFixed(1)}%) — consider recomputing before applying`
-                        : '⚠ Conditions may have changed — consider recomputing'
+                        ? `Process shifted on ${drift.driftedTags.length} tag(s) since last computation (max ${drift.maxDrift.toFixed(1)}%) — consider recomputing before applying`
+                        : 'Conditions may have changed — consider recomputing'
                       }
                     </div>
                   )}
@@ -491,7 +496,11 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                         fontSize: '0.8rem', color: 'var(--success)',
                         fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem',
                       }}>
-                        ✓ Setpoints logged as applied — monitor the live charts above
+                        <span style={{
+                          width: 8, height: 8, borderRadius: '50%',
+                          background: 'var(--success)', display: 'inline-block', flexShrink: 0,
+                        }} />
+                        Setpoints logged as applied — monitor the live charts above
                       </div>
 
                       {/* FOPDT process trajectory */}
@@ -529,8 +538,15 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                 border: '1px solid rgba(239,68,68,0.4)',
                                 borderRadius: 8,
                               }}>
-                                <div style={{ fontSize: '0.8rem', color: '#FCA5A5', fontWeight: 700, marginBottom: '0.2rem' }}>
-                                  ⚠ Process deviation detected — recomputation recommended
+                                <div style={{
+                                  fontSize: '0.8rem', color: '#FCA5A5', fontWeight: 700,
+                                  marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                }}>
+                                  <span style={{
+                                    width: 8, height: 8, borderRadius: '50%',
+                                    background: '#F87171', display: 'inline-block', flexShrink: 0,
+                                  }} />
+                                  Process deviation detected — recomputation recommended
                                 </div>
                                 <div style={{ fontSize: '0.75rem', color: '#CBD5E1', marginBottom: '0.5rem' }}>
                                   {trackingResults.find(tr => tr?.suggest_reoptimize)?.message}
@@ -545,7 +561,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                   }}
                                   onClick={fetchOptimization}
                                 >
-                                  ⟳ Recompute with current conditions
+                                  Recompute with current conditions
                                 </button>
                               </div>
                             )}
@@ -597,28 +613,46 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                         fontSize: '0.72rem', fontWeight: 700, color: '#34D399',
                                         background: 'rgba(52,211,153,0.12)',
                                         border: '1px solid rgba(52,211,153,0.3)',
-                                        borderRadius: 20, padding: '0.1rem 0.6rem',
+                                        borderRadius: 4, padding: '0.15rem 0.6rem',
+                                        display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                        letterSpacing: '0.04em',
                                       }}>
-                                        ✓ On Track · max Δ {tr!.worst_deviation_pct.toFixed(1)}%
+                                        <span style={{
+                                          width: 6, height: 6, borderRadius: '50%',
+                                          background: '#34D399', display: 'inline-block',
+                                        }} />
+                                        ON TRACK &nbsp;·&nbsp; max {tr!.worst_deviation_pct.toFixed(1)}%
                                       </span>
                                     ) : (
                                       <span style={{
                                         fontSize: '0.72rem', fontWeight: 700, color: '#FCA5A5',
                                         background: 'rgba(239,68,68,0.12)',
                                         border: '1px solid rgba(239,68,68,0.3)',
-                                        borderRadius: 20, padding: '0.1rem 0.6rem',
+                                        borderRadius: 4, padding: '0.15rem 0.6rem',
+                                        display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                        letterSpacing: '0.04em',
                                       }}>
-                                        ⚠ Deviation {tr!.worst_deviation_pct.toFixed(1)}%
+                                        <span style={{
+                                          width: 6, height: 6, borderRadius: '50%',
+                                          background: '#F87171', display: 'inline-block',
+                                        }} />
+                                        DEVIATION &nbsp;{tr!.worst_deviation_pct.toFixed(1)}%
                                       </span>
                                     )
                                   ) : (
                                     <span style={{
-                                      fontSize: '0.72rem', color: '#94A3B8',
-                                      background: 'rgba(255,255,255,0.05)',
-                                      border: '1px solid rgba(255,255,255,0.1)',
-                                      borderRadius: 20, padding: '0.1rem 0.6rem',
+                                      fontSize: '0.72rem', color: '#64748B',
+                                      background: 'rgba(255,255,255,0.04)',
+                                      border: '1px solid rgba(255,255,255,0.08)',
+                                      borderRadius: 4, padding: '0.15rem 0.6rem',
+                                      display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+                                      letterSpacing: '0.04em',
                                     }}>
-                                      ⏱ Awaiting timer…
+                                      <span style={{
+                                        width: 6, height: 6, borderRadius: '50%',
+                                        background: '#475569', display: 'inline-block',
+                                      }} />
+                                      PENDING
                                     </span>
                                   )}
 
@@ -712,10 +746,14 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                               <span style={{
                                                 fontSize: '0.82rem', fontWeight: 700,
                                                 color: deviating ? '#F87171' : '#34D399',
-                                                display: 'flex', alignItems: 'center', gap: '0.25rem',
+                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
                                               }}>
-                                                {deviating ? '⚠' : '✓'}
-                                                {' '}{dev.actual.toFixed(1)}
+                                                <span style={{
+                                                  width: 7, height: 7, borderRadius: '50%',
+                                                  background: deviating ? '#F87171' : '#34D399',
+                                                  display: 'inline-block', flexShrink: 0,
+                                                }} />
+                                                {dev.actual.toFixed(1)}
                                                 {dev.unit && (
                                                   <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#94A3B8' }}>
                                                     {dev.unit}
@@ -758,7 +796,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                           }}
                                           onClick={fetchOptimization}
                                         >
-                                          ⟳ Recompute with current conditions
+                                          Recompute with current conditions
                                         </button>
                                       </div>
                                     )}
@@ -869,7 +907,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     >
                       {applyLoading
                         ? <><div className="spinner" style={{ width: 12, height: 12 }} /> Logging…</>
-                        : '✓ I Applied This Recommendation'
+                        : 'Mark as Applied'
                       }
                     </button>
                   )}

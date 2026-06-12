@@ -760,7 +760,9 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
 
                         {simulation.map((s, idx) => {
                           const tr = trackingResults[idx]
-                          const hasTracking = !!tr
+                          // Only consider "tracked" when the backend returned actual deviation entries.
+                          // tr can exist with empty deviations {} if called before DCS values arrived.
+                          const hasTracking = !!tr && Object.keys(tr.deviations || {}).length > 0
                           const cardBorder = hasTracking
                             ? tr!.tracking_ok ? '1px solid rgba(52,211,153,0.4)' : '1px solid rgba(239,68,68,0.45)'
                             : '1px solid rgba(100,116,139,0.25)'

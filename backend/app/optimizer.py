@@ -286,16 +286,40 @@ def check_process_tracking(predicted_trajectory, actual_tag_values, elapsed_s, f
 
     for entry in fp:
         pv_tag = entry.get("pv_tag", "")
-        if pv_tag not in actual_tag_values or pv_tag not in predicted_tags:
-            continue
-        pred    = float(predicted_tags[pv_tag])
-        actual  = float(actual_tag_values[pv_tag])
-        span    = abs(float(entry.get("K", 1.0)) * 80.0) + 1e-9
+        op_tag = entry.get("op_tag", "")
+
+        # Prefer pv_tag; fall back to op_tag if only OP readings are available
+        # (e.g. live stream provides 2TIC403.OP but not 2TIC403 PV)
+        use_tag = None
+        use_predicted_key = None
+        if pv_tag in actual_tag_values and pv_tag in predicted_tags:
+            use_tag = pv_tag
+            use_predicted_key = pv_tag
+        elif op_tag in actual_tag_values and op_tag in predicted_tags:
+            use_tag = op_tag
+            use_predicted_key = op_tag
+        elif pv_tag in actual_tag_values and op_tag in predicted_tags:
+            # actual has pv, predicted has op key — cross-map via label
+            use_tag = pv_tag
+            use_predicted_key = op_tag
+        elif op_tag in actual_tag_values and pv_tag in predicted_tags:
+            use_tag = op_tag
+            use_predicted_key = pv_tag
+        else:
+            continue  # tag genuinely not in either dict
+
+        pred    = float(predicted_tags[use_predicted_key])
+        actual  = float(actual_tag_values[use_tag])
+        # Use OP span (100%) when comparing OP values, PV span otherwise
+        using_op = (use_tag == op_tag)
+        span    = 100.0 if using_op else (abs(float(entry.get("K", 1.0)) * 80.0) + 1e-9)
+        unit    = "%" if using_op else entry.get("unit", "")
         dev_pct = abs(actual - pred) / span * 100.0
-        deviations[pv_tag] = {
+        label   = pv_tag or op_tag   # display key
+        deviations[label] = {
             "predicted": round(pred, 2), "actual": round(actual, 2),
-            "deviation_pct": round(dev_pct, 1), "unit": entry.get("unit", ""),
-        }
+            "deviation_pct": round(dev_pct, 1), "unit": unit,
+               }
         scores.append(max(0.0, 1.0 - dev_pct / 100.0))
 
     tracking_score     = float(np.mean(scores)) if scores else 1.0

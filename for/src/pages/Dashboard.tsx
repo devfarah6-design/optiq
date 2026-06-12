@@ -838,17 +838,20 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                               {/* DCS tag table */}
                               {Object.keys(s.tag_values || {}).length > 0 && (
                                 <div style={{ padding: '0.5rem 0.75rem' }}>
+                                  {/* Column headers — 3 cols when pending, 4 when tracking */}
                                   <div style={{
-                                    display: 'grid', gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
-                                    fontSize: '0.68rem', fontWeight: 700, color: '#475569',
-                                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                                    display: 'grid',
+                                    gridTemplateColumns: hasTracking ? '6rem 1fr 1fr 3.5rem' : '6rem 1fr 1fr',
+                                    fontSize: '0.66rem', fontWeight: 700, color: '#475569',
+                                    textTransform: 'uppercase', letterSpacing: '0.05em',
                                     paddingBottom: '0.3rem',
                                     borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '0.25rem',
+                                    whiteSpace: 'nowrap',
                                   }}>
                                     <span>Tag</span>
                                     <span>Predicted</span>
-                                    <span>{hasTracking ? 'Actual (DCS)' : 'Verify on DCS'}</span>
-                                    <span style={{ textAlign: 'right' }}>{hasTracking ? 'Delta %' : ''}</span>
+                                    <span>{hasTracking ? 'Actual DCS' : 'DCS Reading'}</span>
+                                    {hasTracking && <span style={{ textAlign: 'right' }}>Dev %</span>}
                                   </div>
 
                                   {Object.entries(s.tag_values)
@@ -860,42 +863,58 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                       const deviating = dev && dev.deviation_pct > 5
                                       return (
                                         <div key={tag} style={{
-                                          display: 'grid', gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
-                                          alignItems: 'center', padding: '0.3rem 0',
+                                          display: 'grid',
+                                          gridTemplateColumns: hasTracking ? '6rem 1fr 1fr 3.5rem' : '6rem 1fr 1fr',
+                                          alignItems: 'center', padding: '0.35rem 0',
                                           borderBottom: '1px solid rgba(255,255,255,0.04)',
                                           fontFamily: 'var(--font-mono)',
                                         }}>
+                                          {/* Tag name */}
                                           <span style={{ fontSize: '0.78rem', fontWeight: 700, color: deviating ? '#FCA5A5' : '#7DD3FC' }}>
                                             {tag}
                                           </span>
+
+                                          {/* Predicted — strikethrough once actual arrives */}
                                           <span style={{
-                                            fontSize: '0.8rem',
-                                            color: dev ? '#64748B' : '#CBD5E1',
+                                            fontSize: '0.82rem',
+                                            color: dev ? '#475569' : '#E2E8F0',
                                             textDecoration: dev ? 'line-through' : 'none',
                                             fontWeight: dev ? 400 : 600,
                                           }}>
                                             {(typeof val === 'number' ? val : 0).toFixed(1)}
-                                            {dev?.unit && <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>{dev.unit}</span>}
+                                            {!dev && dev?.unit && <span style={{ fontSize: '0.7rem', marginLeft: 2, color: '#64748B' }}>{dev.unit}</span>}
                                           </span>
+
+                                          {/* Actual or pending */}
                                           {dev ? (
                                             <span style={{
-                                              fontSize: '0.82rem', fontWeight: 700,
+                                              fontSize: '0.85rem', fontWeight: 700,
                                               color: deviating ? '#F87171' : '#34D399',
-                                              display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                              display: 'flex', alignItems: 'center', gap: '0.3rem',
                                             }}>
-                                              <span style={{ width: 7, height: 7, borderRadius: '50%', background: deviating ? '#F87171' : '#34D399', display: 'inline-block', flexShrink: 0 }} />
+                                              <span style={{
+                                                width: 6, height: 6, borderRadius: '50%',
+                                                background: deviating ? '#F87171' : '#34D399',
+                                                display: 'inline-block', flexShrink: 0,
+                                              }} />
                                               {dev.actual.toFixed(1)}
-                                              {dev.unit && <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#94A3B8' }}>{' '}{dev.unit}</span>}
+                                              {dev.unit && <span style={{ fontSize: '0.7rem', fontWeight: 400, color: '#64748B' }}>{dev.unit}</span>}
                                             </span>
                                           ) : (
-                                            <span style={{ fontSize: '0.75rem', color: '#475569', fontStyle: 'italic' }}>— pending</span>
+                                            <span style={{ fontSize: '0.75rem', color: '#334155', letterSpacing: '0.03em' }}>
+                                              — awaiting
+                                            </span>
                                           )}
-                                          <span style={{
-                                            fontSize: '0.75rem', textAlign: 'right', fontWeight: 700,
-                                            color: dev ? (deviating ? '#F87171' : '#34D399') : 'transparent',
-                                          }}>
-                                            {dev ? `${dev.deviation_pct.toFixed(1)}%` : '—'}
-                                          </span>
+
+                                          {/* Deviation % — only rendered when tracking */}
+                                          {hasTracking && (
+                                            <span style={{
+                                              fontSize: '0.75rem', textAlign: 'right', fontWeight: 700,
+                                              color: dev ? (deviating ? '#F87171' : '#34D399') : '#334155',
+                                            }}>
+                                              {dev ? `${dev.deviation_pct.toFixed(1)}%` : '—'}
+                                            </span>
+                                          )}
                                         </div>
                                       )
                                     })}

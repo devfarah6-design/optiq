@@ -498,44 +498,50 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       {simulation.length > 0 && (
                         <div style={{
                           borderTop: '1px solid rgba(0,232,122,0.2)',
-                          padding: '0.75rem 0.875rem',
+                          padding: '0.875rem',
                         }}>
-                          <div style={{ marginBottom: '0.6rem' }}>
+                          {/* Panel header */}
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            marginBottom: '0.75rem',
+                          }}>
                             <div style={{
-                              fontSize: '0.72rem', fontWeight: 700, color: 'var(--text)',
-                              marginBottom: '0.2rem',
-                            }}>
-                              FOPDT process response prediction
-                            </div>
-                            <div style={{ fontSize: '0.68rem', color: 'var(--text-low)', lineHeight: 1.5 }}>
-                              Predicted using First-Order Plus Dead Time dynamics per controller.
-                              Check your DCS at each time mark — if readings match, the model is tracking.
-                              Large deviation means a disturbance or recalculation is needed.
+                              width: 3, height: 18, borderRadius: 2,
+                              background: 'var(--primary)', flexShrink: 0,
+                            }} />
+                            <div>
+                              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#E2E8F0' }}>
+                                FOPDT Process Response
+                              </div>
+                              <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.1rem' }}>
+                                Timers fire automatically. Compare <span style={{ color: '#CBD5E1' }}>predicted</span> vs <span style={{ color: '#34D399' }}>actual DCS</span> at each horizon.
+                              </div>
                             </div>
                           </div>
 
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
 
-                            {/* Top-level recompute banner — shown as soon as any horizon flags deviation */}
+                            {/* Top-level recompute banner */}
                             {trackingResults.some(tr => tr?.suggest_reoptimize) && (
                               <div style={{
-                                padding: '0.6rem 0.75rem',
-                                background: 'rgba(251,113,133,0.08)',
-                                border: '1px solid rgba(251,113,133,0.35)',
-                                borderRadius: 6,
+                                padding: '0.625rem 0.75rem',
+                                background: 'rgba(239,68,68,0.1)',
+                                border: '1px solid rgba(239,68,68,0.4)',
+                                borderRadius: 8,
                               }}>
-                                <div style={{ fontSize: '0.74rem', color: '#F87171', fontWeight: 700, marginBottom: '0.25rem' }}>
+                                <div style={{ fontSize: '0.8rem', color: '#FCA5A5', fontWeight: 700, marginBottom: '0.2rem' }}>
                                   ⚠ Process deviation detected — recomputation recommended
                                 </div>
-                                <div style={{ fontSize: '0.67rem', color: 'var(--text-low)', marginBottom: '0.4rem' }}>
+                                <div style={{ fontSize: '0.75rem', color: '#CBD5E1', marginBottom: '0.5rem' }}>
                                   {trackingResults.find(tr => tr?.suggest_reoptimize)?.message}
                                 </div>
                                 <button
                                   className="btn btn-sm"
                                   style={{
-                                    background: 'rgba(251,113,133,0.12)',
-                                    border: '1px solid rgba(251,113,133,0.4)',
-                                    color: '#F87171', fontSize: '0.74rem', padding: '0.25rem 0.6rem',
+                                    background: 'rgba(239,68,68,0.15)',
+                                    border: '1px solid rgba(239,68,68,0.45)',
+                                    color: '#FCA5A5', fontSize: '0.78rem', padding: '0.3rem 0.7rem',
+                                    fontWeight: 600,
                                   }}
                                   onClick={fetchOptimization}
                                 >
@@ -546,164 +552,215 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
 
                             {simulation.map((s, idx) => {
                               const tr = trackingResults[idx]
+                              const hasTracking = !!tr
+                              const cardBorder = hasTracking
+                                ? tr!.tracking_ok ? '1px solid rgba(52,211,153,0.4)' : '1px solid rgba(239,68,68,0.45)'
+                                : '1px solid rgba(100,116,139,0.3)'
+                              const cardBg = hasTracking
+                                ? tr!.tracking_ok ? 'rgba(52,211,153,0.06)' : 'rgba(239,68,68,0.07)'
+                                : 'rgba(30,41,59,0.5)'
+
                               return (
                               <div key={s.step} style={{
-                                background: tr
-                                  ? tr.tracking_ok
-                                    ? 'rgba(0,232,122,0.06)'
-                                    : 'rgba(251,113,133,0.06)'
-                                  : 'rgba(0,232,122,0.04)',
-                                borderRadius: 6,
-                                border: tr
-                                  ? tr.tracking_ok
-                                    ? '1px solid rgba(0,232,122,0.25)'
-                                    : '1px solid rgba(251,113,133,0.35)'
-                                  : '1px solid rgba(0,232,122,0.12)',
-                                padding: '0.5rem 0.6rem',
+                                background: cardBg,
+                                borderRadius: 8,
+                                border: cardBorder,
+                                overflow: 'hidden',
                               }}>
-                                {/* Time label + KPIs */}
+                                {/* Horizon header row */}
                                 <div style={{
-                                  display: 'grid',
-                                  gridTemplateColumns: '4rem 1fr 1fr 1fr',
+                                  display: 'flex',
                                   alignItems: 'center',
-                                  fontSize: '0.75rem',
-                                  fontFamily: 'var(--font-mono)',
-                                  marginBottom: Object.keys(s.tag_values || {}).length > 0 ? '0.4rem' : 0,
+                                  gap: '0.5rem',
+                                  padding: '0.5rem 0.75rem',
+                                  background: hasTracking
+                                    ? tr!.tracking_ok ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)'
+                                    : 'rgba(255,255,255,0.04)',
+                                  borderBottom: '1px solid rgba(255,255,255,0.06)',
                                 }}>
+                                  {/* Horizon label */}
                                   <span style={{
-                                    color: primary, fontWeight: 700, fontSize: '0.72rem',
+                                    fontFamily: 'var(--font-mono)',
+                                    fontSize: '0.85rem', fontWeight: 800,
+                                    color: hasTracking
+                                      ? tr!.tracking_ok ? '#34D399' : '#FCA5A5'
+                                      : primary,
+                                    minWidth: '4.5rem',
                                   }}>
                                     {s.label || `+${s.step}`}
                                   </span>
-                                  <span>
-                                    <span style={{ color: 'var(--primary)' }}>{s.energy.toFixed(1)}</span>
-                                    {s.energy_delta_pct > 0.1 && (
-                                      <span style={{ color: 'var(--success)', fontSize: '0.62rem', marginLeft: 3 }}>
-                                        -{s.energy_delta_pct.toFixed(1)}%
+
+                                  {/* Status chip */}
+                                  {hasTracking ? (
+                                    tr!.tracking_ok ? (
+                                      <span style={{
+                                        fontSize: '0.72rem', fontWeight: 700, color: '#34D399',
+                                        background: 'rgba(52,211,153,0.12)',
+                                        border: '1px solid rgba(52,211,153,0.3)',
+                                        borderRadius: 20, padding: '0.1rem 0.6rem',
+                                      }}>
+                                        ✓ On Track · max Δ {tr!.worst_deviation_pct.toFixed(1)}%
                                       </span>
-                                    )}
-                                    {s.energy_delta_pct < -0.1 && (
-                                      <span style={{ color: '#F87171', fontSize: '0.62rem', marginLeft: 3 }}>
-                                        +{Math.abs(s.energy_delta_pct).toFixed(1)}%
+                                    ) : (
+                                      <span style={{
+                                        fontSize: '0.72rem', fontWeight: 700, color: '#FCA5A5',
+                                        background: 'rgba(239,68,68,0.12)',
+                                        border: '1px solid rgba(239,68,68,0.3)',
+                                        borderRadius: 20, padding: '0.1rem 0.6rem',
+                                      }}>
+                                        ⚠ Deviation {tr!.worst_deviation_pct.toFixed(1)}%
                                       </span>
-                                    )}
-                                    <span style={{ color: 'var(--text-low)', fontSize: '0.6rem', marginLeft: 2 }}>kJ/kg</span>
-                                  </span>
-                                  <span>
-                                    <span style={{ color: '#A78BFA' }}>{s.purity.toFixed(2)}%</span>
-                                    {s.purity_delta_pct > 0.02 && (
-                                      <span style={{ color: 'var(--success)', fontSize: '0.62rem', marginLeft: 3 }}>
-                                        +{s.purity_delta_pct.toFixed(2)}%
-                                      </span>
-                                    )}
-                                  </span>
-                                  <span style={{ color: '#FCD34D' }}>
-                                    {s.butane.toFixed(3)}
-                                    <span style={{ color: 'var(--text-low)', fontSize: '0.6rem', marginLeft: 2 }}>m³/h</span>
-                                  </span>
+                                    )
+                                  ) : (
+                                    <span style={{
+                                      fontSize: '0.72rem', color: '#94A3B8',
+                                      background: 'rgba(255,255,255,0.05)',
+                                      border: '1px solid rgba(255,255,255,0.1)',
+                                      borderRadius: 20, padding: '0.1rem 0.6rem',
+                                    }}>
+                                      ⏱ Awaiting timer…
+                                    </span>
+                                  )}
+
+                                  {/* KPIs inline */}
+                                  <div style={{
+                                    marginLeft: 'auto', display: 'flex', gap: '0.875rem',
+                                    fontFamily: 'var(--font-mono)', fontSize: '0.75rem',
+                                  }}>
+                                    <span>
+                                      <span style={{ color: '#64748B', marginRight: 3 }}>E</span>
+                                      <span style={{ color: '#7DD3FC', fontWeight: 600 }}>{s.energy.toFixed(2)}</span>
+                                      {s.energy_delta_pct > 0.1 && (
+                                        <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>
+                                          -{s.energy_delta_pct.toFixed(1)}%
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span>
+                                      <span style={{ color: '#64748B', marginRight: 3 }}>P</span>
+                                      <span style={{ color: '#C4B5FD', fontWeight: 600 }}>{s.purity.toFixed(2)}%</span>
+                                      {s.purity_delta_pct > 0.02 && (
+                                        <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>
+                                          +{s.purity_delta_pct.toFixed(2)}%
+                                        </span>
+                                      )}
+                                    </span>
+                                  </div>
                                 </div>
 
-                                {/* DCS-readable PV values for engineer to verify */}
+                                {/* DCS tag table — one row per PV tag */}
                                 {Object.keys(s.tag_values || {}).length > 0 && (
-                                  <div style={{
-                                    display: 'flex', flexWrap: 'wrap', gap: '0.3rem',
-                                    borderTop: '1px solid rgba(255,255,255,0.05)',
-                                    paddingTop: '0.3rem',
-                                    marginBottom: tr ? '0.35rem' : 0,
-                                  }}>
+                                  <div style={{ padding: '0.5rem 0.75rem' }}>
+                                    {/* Column headers */}
+                                    <div style={{
+                                      display: 'grid',
+                                      gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
+                                      fontSize: '0.68rem', fontWeight: 700,
+                                      color: '#475569',
+                                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                                      paddingBottom: '0.3rem',
+                                      borderBottom: '1px solid rgba(255,255,255,0.06)',
+                                      marginBottom: '0.25rem',
+                                    }}>
+                                      <span>Tag</span>
+                                      <span>Predicted</span>
+                                      <span>{hasTracking ? 'Actual (DCS)' : 'Verify on DCS'}</span>
+                                      <span style={{ textAlign: 'right' }}>{hasTracking ? 'Δ %' : ''}</span>
+                                    </div>
+
                                     {Object.entries(s.tag_values)
                                       .filter(([tag]) => !tag.endsWith('.OP'))
                                       .map(([tag, val]) => {
                                         const dev = tr?.deviations?.[tag] as
-                                          { predicted: number; actual: number; deviation_pct: number; unit: string } | undefined
+                                          | { predicted: number; actual: number; deviation_pct: number; unit: string }
+                                          | undefined
+                                        const deviating = dev && dev.deviation_pct > 5
                                         return (
-                                          <span key={tag} style={{
-                                            fontSize: '0.63rem',
+                                          <div key={tag} style={{
+                                            display: 'grid',
+                                            gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
+                                            alignItems: 'center',
+                                            padding: '0.3rem 0',
+                                            borderBottom: '1px solid rgba(255,255,255,0.04)',
                                             fontFamily: 'var(--font-mono)',
-                                            color: 'var(--text-low)',
-                                            background: dev
-                                              ? dev.deviation_pct > 5
-                                                ? 'rgba(251,113,133,0.1)'
-                                                : 'rgba(0,232,122,0.08)'
-                                              : 'rgba(255,255,255,0.04)',
-                                            borderRadius: 3,
-                                            padding: '0.1rem 0.3rem',
                                           }}>
-                                            <span style={{ color: 'var(--accent)' }}>{tag}</span>
-                                            {' '}
+                                            {/* Tag name */}
+                                            <span style={{
+                                              fontSize: '0.78rem', fontWeight: 700,
+                                              color: deviating ? '#FCA5A5' : '#7DD3FC',
+                                            }}>
+                                              {tag}
+                                            </span>
+
+                                            {/* Predicted value — always visible */}
+                                            <span style={{
+                                              fontSize: '0.8rem',
+                                              color: dev ? '#64748B' : '#CBD5E1',
+                                              textDecoration: dev ? 'line-through' : 'none',
+                                              fontWeight: dev ? 400 : 600,
+                                            }}>
+                                              {(typeof val === 'number' ? val : 0).toFixed(1)}
+                                              {dev?.unit && (
+                                                <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>
+                                                  {dev.unit}
+                                                </span>
+                                              )}
+                                            </span>
+
+                                            {/* Actual value — shown after timer fires */}
                                             {dev ? (
-                                              <>
-                                                <span style={{
-                                                  color: 'var(--text-low)',
-                                                  textDecoration: 'line-through',
-                                                  fontSize: '0.58rem',
-                                                }}>
-                                                  {(typeof val === 'number' ? val : 0).toFixed(1)}
-                                                </span>
-                                                {' '}
-                                                <span style={{
-                                                  color: dev.deviation_pct > 5 ? '#F87171' : 'var(--success)',
-                                                  fontWeight: 700,
-                                                }}>
-                                                  {dev.actual.toFixed(1)}
-                                                </span>
+                                              <span style={{
+                                                fontSize: '0.82rem', fontWeight: 700,
+                                                color: deviating ? '#F87171' : '#34D399',
+                                                display: 'flex', alignItems: 'center', gap: '0.25rem',
+                                              }}>
+                                                {deviating ? '⚠' : '✓'}
+                                                {' '}{dev.actual.toFixed(1)}
                                                 {dev.unit && (
-                                                  <span style={{ color: 'var(--text-low)', fontSize: '0.57rem' }}>
-                                                    {' '}{dev.unit}
+                                                  <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#94A3B8' }}>
+                                                    {dev.unit}
                                                   </span>
                                                 )}
-                                              </>
+                                              </span>
                                             ) : (
-                                              typeof val === 'number' ? val.toFixed(1) : val
+                                              <span style={{
+                                                fontSize: '0.75rem', color: '#475569',
+                                                fontStyle: 'italic',
+                                              }}>
+                                                — pending
+                                              </span>
                                             )}
-                                          </span>
+
+                                            {/* Deviation % */}
+                                            <span style={{
+                                              fontSize: '0.75rem', textAlign: 'right',
+                                              fontWeight: 700,
+                                              color: dev
+                                                ? deviating ? '#F87171' : '#34D399'
+                                                : 'transparent',
+                                            }}>
+                                              {dev ? `${dev.deviation_pct.toFixed(1)}%` : '—'}
+                                            </span>
+                                          </div>
                                         )
                                       })}
-                                    {!tr && (
-                                      <span style={{
-                                        fontSize: '0.6rem', color: 'var(--text-low)',
-                                        alignSelf: 'center', fontStyle: 'italic',
-                                      }}>
-                                        verify on DCS
-                                      </span>
-                                    )}
-                                  </div>
-                                )}
 
-                                {/* Auto tracking result — populated by timer at this horizon */}
-                                {tr && (
-                                  <div style={{
-                                    borderTop: '1px solid rgba(255,255,255,0.06)',
-                                    paddingTop: '0.3rem',
-                                    display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap',
-                                  }}>
-                                    {tr.tracking_ok ? (
-                                      <span style={{ fontSize: '0.67rem', color: 'var(--success)' }}>
-                                        ✓ DCS tracking · max deviation {tr.worst_deviation_pct.toFixed(1)}%
-                                      </span>
-                                    ) : (
-                                      <>
-                                        <span style={{ fontSize: '0.67rem', color: '#F87171' }}>
-                                          ⚠ {tr.worst_deviation_pct.toFixed(1)}% deviation
-                                          {Object.keys(tr.deviations).length > 0 && (
-                                            <> on {Object.keys(tr.deviations).join(', ')}</>
-                                          )}
-                                        </span>
-                                        {tr.suggest_reoptimize && (
-                                          <button
-                                            className="btn btn-sm"
-                                            style={{
-                                              fontSize: '0.63rem', padding: '0.1rem 0.4rem',
-                                              background: 'rgba(251,113,133,0.1)',
-                                              border: '1px solid rgba(251,113,133,0.35)',
-                                              color: '#F87171',
-                                            }}
-                                            onClick={fetchOptimization}
-                                          >
-                                            ⟳ Recompute
-                                          </button>
-                                        )}
-                                      </>
+                                    {/* Recompute inline for this horizon */}
+                                    {tr && tr.suggest_reoptimize && (
+                                      <div style={{ paddingTop: '0.4rem' }}>
+                                        <button
+                                          className="btn btn-sm"
+                                          style={{
+                                            fontSize: '0.75rem', padding: '0.25rem 0.7rem',
+                                            background: 'rgba(239,68,68,0.12)',
+                                            border: '1px solid rgba(239,68,68,0.4)',
+                                            color: '#FCA5A5', fontWeight: 600,
+                                          }}
+                                          onClick={fetchOptimization}
+                                        >
+                                          ⟳ Recompute with current conditions
+                                        </button>
+                                      </div>
                                     )}
                                   </div>
                                 )}
@@ -712,13 +769,11 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                             })}
                           </div>
 
-
                           <div style={{
-                            fontSize: '0.62rem', color: 'var(--text-low)', marginTop: '0.5rem',
+                            fontSize: '0.72rem', color: '#64748B', marginTop: '0.625rem',
                             fontStyle: 'italic',
                           }}>
-                            FOPDT model prediction. If DCS readings deviate significantly,
-                            use "Update Recommendation" to recalculate with current conditions.
+                            Timers auto-fire. If actual DCS readings deviate significantly from predicted, click Recompute.
                           </div>
                         </div>
                       )}

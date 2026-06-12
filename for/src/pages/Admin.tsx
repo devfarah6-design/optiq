@@ -242,8 +242,8 @@ const CompaniesTab: React.FC<{
   const handleSave = async () => {
     setSaving(true)
     try {
-      if (editTarget) { await adminApi.updateCompany(editTarget.id, form); showToast('Company updated ✓') }
-      else            { await adminApi.createCompany(form);                showToast('Company created ✓') }
+      if (editTarget) { await adminApi.updateCompany(editTarget.id, form); showToast('Company updated') }
+      else            { await adminApi.createCompany(form);                showToast('Company created') }
       setShowModal(false); onRefresh()
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Error saving', false)
@@ -317,7 +317,7 @@ const CompaniesTab: React.FC<{
           <div className="modal" style={{ maxWidth: 520, maxHeight: '90vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             <div className="flex justify-between items-center mb-5" style={{ flexShrink: 0 }}>
               <div className="font-display font-bold text-lg">{editTarget ? 'Edit Company' : 'Add Company'}</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>×</button>
             </div>
             <div style={{ flex: 1, overflowY: 'auto', paddingRight: 4, marginRight: -4 }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
@@ -342,7 +342,7 @@ const CompaniesTab: React.FC<{
                       </button>
                       <input ref={logoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoUpload} />
                     </div>
-                    {form.logo_url && <button className="btn btn-danger btn-sm" onClick={() => setForm(p => ({ ...p, logo_url: '' }))}>✕</button>}
+                    {form.logo_url && <button className="btn btn-danger btn-sm" onClick={() => setForm(p => ({ ...p, logo_url: '' }))}>×</button>}
                   </div>
                 </Field>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '0.75rem' }}>
@@ -403,8 +403,8 @@ const SitesTab: React.FC<{
     if (!form.name) { showToast('Name is required', false); return }
     setSaving(true)
     try {
-      if (editTarget) { await siteApi.update(editTarget.id, form); showToast('Site updated ✓') }
-      else            { await siteApi.create(form);                 showToast('Site created ✓') }
+      if (editTarget) { await siteApi.update(editTarget.id, form); showToast('Site updated') }
+      else            { await siteApi.create(form);                 showToast('Site created') }
       setShowModal(false); onRefresh()
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Error saving site', false)
@@ -462,7 +462,7 @@ const SitesTab: React.FC<{
           <div className="modal" style={{ maxWidth: 440 }}>
             <div className="flex justify-between items-center mb-5">
               <div className="font-display font-bold text-lg">{editTarget ? 'Edit Site' : 'Add Site'}</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>×</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               {companies.length > 1 && !editTarget && (
@@ -537,8 +537,8 @@ const ColumnsTab: React.FC<{
     if (!form.name || !form.tag) { showToast('Name and tag are required', false); return }
     setSaving(true)
     try {
-      if (editTarget) { await columnApi.update(editTarget.id, form); showToast('Column updated ✓') }
-      else            { await columnApi.create(form);                 showToast('Column created ✓') }
+      if (editTarget) { await columnApi.update(editTarget.id, form); showToast('Column updated') }
+      else            { await columnApi.create(form);                 showToast('Column created') }
       setShowModal(false); onRefresh()
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Error saving column', false)
@@ -567,7 +567,7 @@ const ColumnsTab: React.FC<{
 
       {sites.length === 0 && (
         <div style={{ padding: '1.5rem', textAlign: 'center', color: 'var(--warning)', fontSize: '0.85rem' }}>
-          ⚠ Add a site first before adding columns
+          Add a site first before adding columns
         </div>
       )}
 
@@ -611,7 +611,7 @@ const ColumnsTab: React.FC<{
           <div className="modal" style={{ maxWidth: 480 }}>
             <div className="flex justify-between items-center mb-5">
               <div className="font-display font-bold text-lg">{editTarget ? 'Edit Column' : 'Add Column'}</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>×</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem', maxHeight: '65vh', overflowY: 'auto' }}>
               <Field label="Site">
@@ -713,7 +713,7 @@ const UsersTab: React.FC<{
     setSaving(true)
     try {
       await authApi.createUser(form)
-      showToast(`User "${form.username}" created ✓`)
+      showToast(`User "${form.username}" created`)
       setShowModal(false)
       setForm({ username: '', password: '', role: 'operator', company_id: null })
       load()
@@ -727,7 +727,7 @@ const UsersTab: React.FC<{
     setDeleting(true)
     try {
       await authApi.deleteUser(deleteId)
-      showToast('User deleted ✓')
+      showToast('User deleted')
       setUsers(u => u.filter(x => x.id !== deleteId))
     } catch (e: any) {
       showToast(e?.response?.data?.detail ?? 'Error deleting user', false)
@@ -742,7 +742,7 @@ const UsersTab: React.FC<{
       <div className="flex justify-between items-center mb-4">
         <div>
           <div className="font-semibold text-lg">User Management</div>
-          <div className="text-xs text-muted">{users.length} user{users.length !== 1 ? 's' : ''} · click ✕ to delete</div>
+          <div className="text-xs text-muted">{users.length} user{users.length !== 1 ? 's' : ''} · click X to delete</div>
         </div>
         <button className="btn btn-primary btn-sm" onClick={() => setShowModal(true)}>+ Add User</button>
       </div>
@@ -843,7 +843,7 @@ const UsersTab: React.FC<{
           <div className="modal" style={{ maxWidth: 420 }}>
             <div className="flex justify-between items-center mb-5">
               <div className="font-display font-bold text-lg">Add User</div>
-              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>✕</button>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowModal(false)}>×</button>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.875rem' }}>
               <Field label="Username *">
@@ -929,7 +929,7 @@ const ConfigTab: React.FC<{
     try {
       await adminApi.setConfig(key, value)
       setCfg(prev => ({ ...prev, [key]: value }))
-      showToast(`Config: ${key} updated ✓`)
+      showToast(`Config: ${key} updated`)
     } catch {
       showToast('Failed to update config', false)
     } finally { setSaving(false) }

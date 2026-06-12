@@ -482,339 +482,21 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     </div>
                   )}
 
-                  {/* Applied confirmation + simulation trajectory */}
+                  {/* Applied confirmation strip */}
                   {applied && (
                     <div style={{
-                      background: 'rgba(0,232,122,0.06)',
+                      padding: '0.5rem 0.875rem',
+                      background: 'rgba(0,232,122,0.07)',
                       border: '1px solid rgba(0,232,122,0.3)',
                       borderRadius: 'var(--r-md)',
-                      overflow: 'hidden',
+                      fontSize: '0.8rem', color: 'var(--success)',
+                      fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.5rem',
                     }}>
-                      {/* Confirmation header */}
-                      <div style={{
-                        padding: '0.6rem 0.875rem',
-                        fontSize: '0.8rem', color: 'var(--success)',
-                        fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.4rem',
-                      }}>
-                        <span style={{
-                          width: 8, height: 8, borderRadius: '50%',
-                          background: 'var(--success)', display: 'inline-block', flexShrink: 0,
-                        }} />
-                        Setpoints logged as applied — monitor the live charts above
-                      </div>
-
-                      {/* FOPDT process trajectory */}
-                      {simulation.length > 0 && (
-                        <div style={{
-                          borderTop: '1px solid rgba(0,232,122,0.2)',
-                          padding: '0.875rem',
-                        }}>
-                          {/* Panel header */}
-                          <div style={{
-                            display: 'flex', alignItems: 'center', gap: '0.5rem',
-                            marginBottom: '0.75rem',
-                          }}>
-                            <div style={{
-                              width: 3, height: 18, borderRadius: 2,
-                              background: 'var(--primary)', flexShrink: 0,
-                            }} />
-                            <div>
-                              <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#E2E8F0' }}>
-                                FOPDT Process Response
-                              </div>
-                              <div style={{ fontSize: '0.72rem', color: '#94A3B8', marginTop: '0.1rem' }}>
-                                Timers fire automatically. Compare <span style={{ color: '#CBD5E1' }}>predicted</span> vs <span style={{ color: '#34D399' }}>actual DCS</span> at each horizon.
-                              </div>
-                            </div>
-                          </div>
-
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
-
-                            {/* Top-level recompute banner */}
-                            {trackingResults.some(tr => tr?.suggest_reoptimize) && (
-                              <div style={{
-                                padding: '0.625rem 0.75rem',
-                                background: 'rgba(239,68,68,0.1)',
-                                border: '1px solid rgba(239,68,68,0.4)',
-                                borderRadius: 8,
-                              }}>
-                                <div style={{
-                                  fontSize: '0.8rem', color: '#FCA5A5', fontWeight: 700,
-                                  marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem',
-                                }}>
-                                  <span style={{
-                                    width: 8, height: 8, borderRadius: '50%',
-                                    background: '#F87171', display: 'inline-block', flexShrink: 0,
-                                  }} />
-                                  Process deviation detected — recomputation recommended
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: '#CBD5E1', marginBottom: '0.5rem' }}>
-                                  {trackingResults.find(tr => tr?.suggest_reoptimize)?.message}
-                                </div>
-                                <button
-                                  className="btn btn-sm"
-                                  style={{
-                                    background: 'rgba(239,68,68,0.15)',
-                                    border: '1px solid rgba(239,68,68,0.45)',
-                                    color: '#FCA5A5', fontSize: '0.78rem', padding: '0.3rem 0.7rem',
-                                    fontWeight: 600,
-                                  }}
-                                  onClick={fetchOptimization}
-                                >
-                                  Recompute with current conditions
-                                </button>
-                              </div>
-                            )}
-
-                            {simulation.map((s, idx) => {
-                              const tr = trackingResults[idx]
-                              const hasTracking = !!tr
-                              const cardBorder = hasTracking
-                                ? tr!.tracking_ok ? '1px solid rgba(52,211,153,0.4)' : '1px solid rgba(239,68,68,0.45)'
-                                : '1px solid rgba(100,116,139,0.3)'
-                              const cardBg = hasTracking
-                                ? tr!.tracking_ok ? 'rgba(52,211,153,0.06)' : 'rgba(239,68,68,0.07)'
-                                : 'rgba(30,41,59,0.5)'
-
-                              return (
-                              <div key={s.step} style={{
-                                background: cardBg,
-                                borderRadius: 8,
-                                border: cardBorder,
-                                overflow: 'hidden',
-                              }}>
-                                {/* Horizon header row */}
-                                <div style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  gap: '0.5rem',
-                                  padding: '0.5rem 0.75rem',
-                                  background: hasTracking
-                                    ? tr!.tracking_ok ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)'
-                                    : 'rgba(255,255,255,0.04)',
-                                  borderBottom: '1px solid rgba(255,255,255,0.06)',
-                                }}>
-                                  {/* Horizon label */}
-                                  <span style={{
-                                    fontFamily: 'var(--font-mono)',
-                                    fontSize: '0.85rem', fontWeight: 800,
-                                    color: hasTracking
-                                      ? tr!.tracking_ok ? '#34D399' : '#FCA5A5'
-                                      : primary,
-                                    minWidth: '4.5rem',
-                                  }}>
-                                    {s.label || `+${s.step}`}
-                                  </span>
-
-                                  {/* Status chip */}
-                                  {hasTracking ? (
-                                    tr!.tracking_ok ? (
-                                      <span style={{
-                                        fontSize: '0.72rem', fontWeight: 700, color: '#34D399',
-                                        background: 'rgba(52,211,153,0.12)',
-                                        border: '1px solid rgba(52,211,153,0.3)',
-                                        borderRadius: 4, padding: '0.15rem 0.6rem',
-                                        display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                                        letterSpacing: '0.04em',
-                                      }}>
-                                        <span style={{
-                                          width: 6, height: 6, borderRadius: '50%',
-                                          background: '#34D399', display: 'inline-block',
-                                        }} />
-                                        ON TRACK &nbsp;·&nbsp; max {tr!.worst_deviation_pct.toFixed(1)}%
-                                      </span>
-                                    ) : (
-                                      <span style={{
-                                        fontSize: '0.72rem', fontWeight: 700, color: '#FCA5A5',
-                                        background: 'rgba(239,68,68,0.12)',
-                                        border: '1px solid rgba(239,68,68,0.3)',
-                                        borderRadius: 4, padding: '0.15rem 0.6rem',
-                                        display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                                        letterSpacing: '0.04em',
-                                      }}>
-                                        <span style={{
-                                          width: 6, height: 6, borderRadius: '50%',
-                                          background: '#F87171', display: 'inline-block',
-                                        }} />
-                                        DEVIATION &nbsp;{tr!.worst_deviation_pct.toFixed(1)}%
-                                      </span>
-                                    )
-                                  ) : (
-                                    <span style={{
-                                      fontSize: '0.72rem', color: '#64748B',
-                                      background: 'rgba(255,255,255,0.04)',
-                                      border: '1px solid rgba(255,255,255,0.08)',
-                                      borderRadius: 4, padding: '0.15rem 0.6rem',
-                                      display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
-                                      letterSpacing: '0.04em',
-                                    }}>
-                                      <span style={{
-                                        width: 6, height: 6, borderRadius: '50%',
-                                        background: '#475569', display: 'inline-block',
-                                      }} />
-                                      PENDING
-                                    </span>
-                                  )}
-
-                                  {/* KPIs inline */}
-                                  <div style={{
-                                    marginLeft: 'auto', display: 'flex', gap: '0.875rem',
-                                    fontFamily: 'var(--font-mono)', fontSize: '0.75rem',
-                                  }}>
-                                    <span>
-                                      <span style={{ color: '#64748B', marginRight: 3 }}>E</span>
-                                      <span style={{ color: '#7DD3FC', fontWeight: 600 }}>{s.energy.toFixed(2)}</span>
-                                      {s.energy_delta_pct > 0.1 && (
-                                        <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>
-                                          -{s.energy_delta_pct.toFixed(1)}%
-                                        </span>
-                                      )}
-                                    </span>
-                                    <span>
-                                      <span style={{ color: '#64748B', marginRight: 3 }}>P</span>
-                                      <span style={{ color: '#C4B5FD', fontWeight: 600 }}>{s.purity.toFixed(2)}%</span>
-                                      {s.purity_delta_pct > 0.02 && (
-                                        <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>
-                                          +{s.purity_delta_pct.toFixed(2)}%
-                                        </span>
-                                      )}
-                                    </span>
-                                  </div>
-                                </div>
-
-                                {/* DCS tag table — one row per PV tag */}
-                                {Object.keys(s.tag_values || {}).length > 0 && (
-                                  <div style={{ padding: '0.5rem 0.75rem' }}>
-                                    {/* Column headers */}
-                                    <div style={{
-                                      display: 'grid',
-                                      gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
-                                      fontSize: '0.68rem', fontWeight: 700,
-                                      color: '#475569',
-                                      textTransform: 'uppercase', letterSpacing: '0.06em',
-                                      paddingBottom: '0.3rem',
-                                      borderBottom: '1px solid rgba(255,255,255,0.06)',
-                                      marginBottom: '0.25rem',
-                                    }}>
-                                      <span>Tag</span>
-                                      <span>Predicted</span>
-                                      <span>{hasTracking ? 'Actual (DCS)' : 'Verify on DCS'}</span>
-                                      <span style={{ textAlign: 'right' }}>{hasTracking ? 'Δ %' : ''}</span>
-                                    </div>
-
-                                    {Object.entries(s.tag_values)
-                                      .filter(([tag]) => !tag.endsWith('.OP'))
-                                      .map(([tag, val]) => {
-                                        const dev = tr?.deviations?.[tag] as
-                                          | { predicted: number; actual: number; deviation_pct: number; unit: string }
-                                          | undefined
-                                        const deviating = dev && dev.deviation_pct > 5
-                                        return (
-                                          <div key={tag} style={{
-                                            display: 'grid',
-                                            gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
-                                            alignItems: 'center',
-                                            padding: '0.3rem 0',
-                                            borderBottom: '1px solid rgba(255,255,255,0.04)',
-                                            fontFamily: 'var(--font-mono)',
-                                          }}>
-                                            {/* Tag name */}
-                                            <span style={{
-                                              fontSize: '0.78rem', fontWeight: 700,
-                                              color: deviating ? '#FCA5A5' : '#7DD3FC',
-                                            }}>
-                                              {tag}
-                                            </span>
-
-                                            {/* Predicted value — always visible */}
-                                            <span style={{
-                                              fontSize: '0.8rem',
-                                              color: dev ? '#64748B' : '#CBD5E1',
-                                              textDecoration: dev ? 'line-through' : 'none',
-                                              fontWeight: dev ? 400 : 600,
-                                            }}>
-                                              {(typeof val === 'number' ? val : 0).toFixed(1)}
-                                              {dev?.unit && (
-                                                <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>
-                                                  {dev.unit}
-                                                </span>
-                                              )}
-                                            </span>
-
-                                            {/* Actual value — shown after timer fires */}
-                                            {dev ? (
-                                              <span style={{
-                                                fontSize: '0.82rem', fontWeight: 700,
-                                                color: deviating ? '#F87171' : '#34D399',
-                                                display: 'flex', alignItems: 'center', gap: '0.35rem',
-                                              }}>
-                                                <span style={{
-                                                  width: 7, height: 7, borderRadius: '50%',
-                                                  background: deviating ? '#F87171' : '#34D399',
-                                                  display: 'inline-block', flexShrink: 0,
-                                                }} />
-                                                {dev.actual.toFixed(1)}
-                                                {dev.unit && (
-                                                  <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#94A3B8' }}>
-                                                    {dev.unit}
-                                                  </span>
-                                                )}
-                                              </span>
-                                            ) : (
-                                              <span style={{
-                                                fontSize: '0.75rem', color: '#475569',
-                                                fontStyle: 'italic',
-                                              }}>
-                                                — pending
-                                              </span>
-                                            )}
-
-                                            {/* Deviation % */}
-                                            <span style={{
-                                              fontSize: '0.75rem', textAlign: 'right',
-                                              fontWeight: 700,
-                                              color: dev
-                                                ? deviating ? '#F87171' : '#34D399'
-                                                : 'transparent',
-                                            }}>
-                                              {dev ? `${dev.deviation_pct.toFixed(1)}%` : '—'}
-                                            </span>
-                                          </div>
-                                        )
-                                      })}
-
-                                    {/* Recompute inline for this horizon */}
-                                    {tr && tr.suggest_reoptimize && (
-                                      <div style={{ paddingTop: '0.4rem' }}>
-                                        <button
-                                          className="btn btn-sm"
-                                          style={{
-                                            fontSize: '0.75rem', padding: '0.25rem 0.7rem',
-                                            background: 'rgba(239,68,68,0.12)',
-                                            border: '1px solid rgba(239,68,68,0.4)',
-                                            color: '#FCA5A5', fontWeight: 600,
-                                          }}
-                                          onClick={fetchOptimization}
-                                        >
-                                          Recompute with current conditions
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                              )
-                            })}
-                          </div>
-
-                          <div style={{
-                            fontSize: '0.72rem', color: '#64748B', marginTop: '0.625rem',
-                            fontStyle: 'italic',
-                          }}>
-                            Timers auto-fire. If actual DCS readings deviate significantly from predicted, click Recompute.
-                          </div>
-                        </div>
-                      )}
+                      <span style={{
+                        width: 8, height: 8, borderRadius: '50%',
+                        background: 'var(--success)', display: 'inline-block', flexShrink: 0,
+                      }} />
+                      Setpoints logged as applied — monitor the live charts above
                     </div>
                   )}
 
@@ -835,24 +517,93 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                     </div>
                   )}
 
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.625rem' }}>
-                    <Metric label="Energy savings"
-                      value={recommendation.energy_savings_percent > 0
-                        ? `${recommendation.energy_savings_percent.toFixed(1)}%`
-                        : 'Near optimal'}
-                      positive={recommendation.energy_savings_percent > 0} />
-                    <Metric label="Purity gain"
-                      value={recommendation.purity_improvement_percent > 0.01
-                        ? `+${recommendation.purity_improvement_percent.toFixed(2)}%`
-                        : 'Unchanged'}
-                      positive={recommendation.purity_improvement_percent > 0.01} />
-                    <Metric label="Current energy" value={recommendation.current_energy.toFixed(4)} />
-                    <Metric label="Best found"     value={recommendation.expected_energy.toFixed(4)} />
+                  {/* ── KPI metrics row ── */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    {/* Energy savings */}
+                    <div style={{
+                      background: recommendation.energy_savings_percent > 0
+                        ? 'rgba(52,211,153,0.07)' : 'rgba(255,255,255,0.03)',
+                      border: recommendation.energy_savings_percent > 0
+                        ? '1px solid rgba(52,211,153,0.25)' : '1px solid rgba(255,255,255,0.07)',
+                      borderRadius: 8, padding: '0.75rem',
+                    }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.3rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                        Energy savings
+                      </div>
+                      <div style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '1.35rem', fontWeight: 800,
+                        color: recommendation.energy_savings_percent > 0 ? '#34D399' : '#94A3B8',
+                      }}>
+                        {recommendation.energy_savings_percent > 0
+                          ? `${recommendation.energy_savings_percent.toFixed(1)}%`
+                          : 'Near optimal'}
+                      </div>
+                    </div>
+
+                    {/* Purity gain */}
+                    <div style={{
+                      background: recommendation.purity_improvement_percent > 0.01
+                        ? 'rgba(167,139,250,0.07)' : 'rgba(255,255,255,0.03)',
+                      border: recommendation.purity_improvement_percent > 0.01
+                        ? '1px solid rgba(167,139,250,0.25)' : '1px solid rgba(255,255,255,0.07)',
+                      borderRadius: 8, padding: '0.75rem',
+                    }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.3rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                        Purity gain
+                      </div>
+                      <div style={{
+                        fontFamily: 'var(--font-mono)', fontSize: '1.35rem', fontWeight: 800,
+                        color: recommendation.purity_improvement_percent > 0.01 ? '#A78BFA' : '#94A3B8',
+                      }}>
+                        {recommendation.purity_improvement_percent > 0.01
+                          ? `+${recommendation.purity_improvement_percent.toFixed(2)}%`
+                          : 'Unchanged'}
+                      </div>
+                    </div>
+
+                    {/* Current energy */}
+                    <div style={{
+                      background: 'rgba(255,255,255,0.03)',
+                      border: '1px solid rgba(255,255,255,0.07)',
+                      borderRadius: 8, padding: '0.75rem',
+                    }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.3rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                        Current energy
+                      </div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: '#CBD5E1' }}>
+                        {recommendation.current_energy.toFixed(4)}
+                      </div>
+                    </div>
+
+                    {/* Best found */}
+                    <div style={{
+                      background: 'rgba(125,211,252,0.06)',
+                      border: '1px solid rgba(125,211,252,0.2)',
+                      borderRadius: 8, padding: '0.75rem',
+                    }}>
+                      <div style={{ fontSize: '0.72rem', color: '#64748B', marginBottom: '0.3rem', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+                        Best found
+                      </div>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem', fontWeight: 700, color: '#7DD3FC' }}>
+                        {recommendation.expected_energy.toFixed(4)}
+                      </div>
+                    </div>
                   </div>
 
                   {/* ── OP setpoints ── */}
-                  <div className="text-xs text-muted">Recommended OP setpoints</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: primary, lineHeight: 1.8 }}>
+                  <div style={{
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    borderRadius: 8, overflow: 'hidden',
+                  }}>
+                    <div style={{
+                      padding: '0.5rem 0.875rem',
+                      background: 'rgba(255,255,255,0.04)',
+                      borderBottom: '1px solid rgba(255,255,255,0.07)',
+                      fontSize: '0.72rem', fontWeight: 700, color: '#64748B',
+                      textTransform: 'uppercase', letterSpacing: '0.06em',
+                    }}>
+                      Recommended OP Setpoints
+                    </div>
                     {[
                       ['2TIC403', 'Bottom temp ctrl'],
                       ['2FIC419', 'Feed flow ctrl'],
@@ -860,9 +611,22 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                       ['2LIC412', 'Bottom level ctrl'],
                     ].map(([tag, label], i) => (
                       recommendation.recommended_setpoints[i] != null && (
-                        <div key={tag}>
-                          <span style={{ color: 'var(--text-low)', fontSize: '0.7rem' }}>{label} </span>
-                          <span>{recommendation.recommended_setpoints[i].toFixed(1)}%</span>
+                        <div key={tag} style={{
+                          display: 'grid', gridTemplateColumns: '1fr auto',
+                          alignItems: 'center',
+                          padding: '0.55rem 0.875rem',
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                        }}>
+                          <div>
+                            <div style={{ fontSize: '0.78rem', color: '#CBD5E1', fontWeight: 600 }}>{label}</div>
+                            <div style={{ fontSize: '0.7rem', color: '#475569', fontFamily: 'var(--font-mono)' }}>{tag}</div>
+                          </div>
+                          <div style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 800,
+                            color: primary,
+                          }}>
+                            {recommendation.recommended_setpoints[i].toFixed(1)}%
+                          </div>
                         </div>
                       )
                     ))}
@@ -870,26 +634,45 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
 
                   {/* ── SP setpoints (admin-configured) ── */}
                   {recommendation.sp_config && recommendation.sp_config.length > 0 && (
-                    <>
-                      <div className="text-xs text-muted" style={{ marginTop: '0.5rem' }}>
-                        Recommended SP setpoints
+                    <div style={{
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      borderRadius: 8, overflow: 'hidden',
+                    }}>
+                      <div style={{
+                        padding: '0.5rem 0.875rem',
+                        background: 'rgba(255,255,255,0.04)',
+                        borderBottom: '1px solid rgba(255,255,255,0.07)',
+                        fontSize: '0.72rem', fontWeight: 700, color: '#64748B',
+                        textTransform: 'uppercase', letterSpacing: '0.06em',
+                      }}>
+                        Recommended SP Setpoints
                       </div>
-                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--accent)', lineHeight: 1.8 }}>
-                        {recommendation.sp_config.map(sp => (
-                          sp.recommended != null && (
-                            <div key={sp.tag}>
-                              <span style={{ color: 'var(--text-low)', fontSize: '0.7rem' }}>
-                                {sp.desc || sp.tag}{' '}
-                              </span>
-                              <span>
-                                {sp.recommended.toFixed(sp.unit === '°C' ? 1 : 0)}
-                                {' '}{sp.unit}
-                              </span>
+                      {recommendation.sp_config.map(sp => (
+                        sp.recommended != null && (
+                          <div key={sp.tag} style={{
+                            display: 'grid', gridTemplateColumns: '1fr auto',
+                            alignItems: 'center',
+                            padding: '0.55rem 0.875rem',
+                            borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          }}>
+                            <div>
+                              <div style={{ fontSize: '0.78rem', color: '#CBD5E1', fontWeight: 600 }}>
+                                {sp.desc || sp.tag}
+                              </div>
+                              <div style={{ fontSize: '0.7rem', color: '#475569', fontFamily: 'var(--font-mono)' }}>
+                                {sp.tag}
+                              </div>
                             </div>
-                          )
-                        ))}
-                      </div>
-                    </>
+                            <div style={{
+                              fontFamily: 'var(--font-mono)', fontSize: '1rem', fontWeight: 800,
+                              color: 'var(--accent)',
+                            }}>
+                              {sp.recommended.toFixed(sp.unit === '°C' ? 1 : 0)} {sp.unit}
+                            </div>
+                          </div>
+                        )
+                      ))}
+                    </div>
                   )}
 
                   {/* Apply button */}
@@ -900,7 +683,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                         background: 'rgba(0,232,122,0.1)',
                         border: '1px solid rgba(0,232,122,0.3)',
                         color: 'var(--success)',
-                        fontWeight: 700, fontSize: '0.82rem',
+                        fontWeight: 700, fontSize: '0.875rem', padding: '0.65rem',
                       }}
                       onClick={applyRecommendation}
                       disabled={applyLoading}
@@ -910,6 +693,238 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                         : 'Mark as Applied'
                       }
                     </button>
+                  )}
+
+                  {/* FOPDT process response — shown after apply, below setpoints */}
+                  {applied && simulation.length > 0 && (
+                    <div style={{
+                      border: '1px solid rgba(0,217,255,0.15)',
+                      borderRadius: 8, overflow: 'hidden',
+                    }}>
+                      {/* Panel header */}
+                      <div style={{
+                        padding: '0.6rem 0.875rem',
+                        background: 'rgba(0,217,255,0.05)',
+                        borderBottom: '1px solid rgba(0,217,255,0.12)',
+                        display: 'flex', alignItems: 'center', gap: '0.6rem',
+                      }}>
+                        <span style={{
+                          width: 3, height: 16, borderRadius: 2,
+                          background: 'var(--primary)', display: 'inline-block', flexShrink: 0,
+                        }} />
+                        <div>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 700, color: '#E2E8F0' }}>
+                            FOPDT Process Response
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: '#64748B' }}>
+                            Timers fire automatically — compare predicted vs actual DCS at each horizon
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
+
+                        {/* Top-level recompute banner */}
+                        {trackingResults.some(tr => tr?.suggest_reoptimize) && (
+                          <div style={{
+                            padding: '0.625rem 0.75rem',
+                            background: 'rgba(239,68,68,0.1)',
+                            border: '1px solid rgba(239,68,68,0.4)',
+                            borderRadius: 6,
+                          }}>
+                            <div style={{
+                              fontSize: '0.8rem', color: '#FCA5A5', fontWeight: 700,
+                              marginBottom: '0.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem',
+                            }}>
+                              <span style={{
+                                width: 8, height: 8, borderRadius: '50%',
+                                background: '#F87171', display: 'inline-block', flexShrink: 0,
+                              }} />
+                              Process deviation detected — recomputation recommended
+                            </div>
+                            <div style={{ fontSize: '0.75rem', color: '#CBD5E1', marginBottom: '0.5rem' }}>
+                              {trackingResults.find(tr => tr?.suggest_reoptimize)?.message}
+                            </div>
+                            <button className="btn btn-sm"
+                              style={{
+                                background: 'rgba(239,68,68,0.15)',
+                                border: '1px solid rgba(239,68,68,0.45)',
+                                color: '#FCA5A5', fontSize: '0.78rem', padding: '0.3rem 0.7rem', fontWeight: 600,
+                              }}
+                              onClick={fetchOptimization}
+                            >
+                              Recompute with current conditions
+                            </button>
+                          </div>
+                        )}
+
+                        {simulation.map((s, idx) => {
+                          const tr = trackingResults[idx]
+                          const hasTracking = !!tr
+                          const cardBorder = hasTracking
+                            ? tr!.tracking_ok ? '1px solid rgba(52,211,153,0.4)' : '1px solid rgba(239,68,68,0.45)'
+                            : '1px solid rgba(100,116,139,0.25)'
+                          const cardBg = hasTracking
+                            ? tr!.tracking_ok ? 'rgba(52,211,153,0.06)' : 'rgba(239,68,68,0.07)'
+                            : 'rgba(30,41,59,0.5)'
+
+                          return (
+                            <div key={s.step} style={{ background: cardBg, borderRadius: 6, border: cardBorder, overflow: 'hidden' }}>
+                              {/* Horizon header */}
+                              <div style={{
+                                display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                padding: '0.45rem 0.75rem',
+                                background: hasTracking
+                                  ? tr!.tracking_ok ? 'rgba(52,211,153,0.1)' : 'rgba(239,68,68,0.1)'
+                                  : 'rgba(255,255,255,0.04)',
+                                borderBottom: '1px solid rgba(255,255,255,0.06)',
+                              }}>
+                                <span style={{
+                                  fontFamily: 'var(--font-mono)', fontSize: '0.85rem', fontWeight: 800,
+                                  color: hasTracking ? (tr!.tracking_ok ? '#34D399' : '#FCA5A5') : primary,
+                                  minWidth: '4.5rem',
+                                }}>
+                                  {s.label || `+${s.step}`}
+                                </span>
+
+                                {hasTracking ? (
+                                  tr!.tracking_ok ? (
+                                    <span style={{
+                                      fontSize: '0.72rem', fontWeight: 700, color: '#34D399',
+                                      background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.3)',
+                                      borderRadius: 4, padding: '0.15rem 0.6rem',
+                                      display: 'inline-flex', alignItems: 'center', gap: '0.4rem', letterSpacing: '0.04em',
+                                    }}>
+                                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#34D399', display: 'inline-block' }} />
+                                      ON TRACK &nbsp;·&nbsp; max {tr!.worst_deviation_pct.toFixed(1)}%
+                                    </span>
+                                  ) : (
+                                    <span style={{
+                                      fontSize: '0.72rem', fontWeight: 700, color: '#FCA5A5',
+                                      background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+                                      borderRadius: 4, padding: '0.15rem 0.6rem',
+                                      display: 'inline-flex', alignItems: 'center', gap: '0.4rem', letterSpacing: '0.04em',
+                                    }}>
+                                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#F87171', display: 'inline-block' }} />
+                                      DEVIATION &nbsp;{tr!.worst_deviation_pct.toFixed(1)}%
+                                    </span>
+                                  )
+                                ) : (
+                                  <span style={{
+                                    fontSize: '0.72rem', color: '#64748B',
+                                    background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                                    borderRadius: 4, padding: '0.15rem 0.6rem',
+                                    display: 'inline-flex', alignItems: 'center', gap: '0.4rem', letterSpacing: '0.04em',
+                                  }}>
+                                    <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#475569', display: 'inline-block' }} />
+                                    PENDING
+                                  </span>
+                                )}
+
+                                <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.875rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+                                  <span>
+                                    <span style={{ color: '#64748B', marginRight: 3 }}>E</span>
+                                    <span style={{ color: '#7DD3FC', fontWeight: 600 }}>{s.energy.toFixed(2)}</span>
+                                    {s.energy_delta_pct > 0.1 && <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>-{s.energy_delta_pct.toFixed(1)}%</span>}
+                                  </span>
+                                  <span>
+                                    <span style={{ color: '#64748B', marginRight: 3 }}>P</span>
+                                    <span style={{ color: '#C4B5FD', fontWeight: 600 }}>{s.purity.toFixed(2)}%</span>
+                                    {s.purity_delta_pct > 0.02 && <span style={{ color: '#34D399', fontSize: '0.68rem', marginLeft: 2 }}>+{s.purity_delta_pct.toFixed(2)}%</span>}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* DCS tag table */}
+                              {Object.keys(s.tag_values || {}).length > 0 && (
+                                <div style={{ padding: '0.5rem 0.75rem' }}>
+                                  <div style={{
+                                    display: 'grid', gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
+                                    fontSize: '0.68rem', fontWeight: 700, color: '#475569',
+                                    textTransform: 'uppercase', letterSpacing: '0.06em',
+                                    paddingBottom: '0.3rem',
+                                    borderBottom: '1px solid rgba(255,255,255,0.06)', marginBottom: '0.25rem',
+                                  }}>
+                                    <span>Tag</span>
+                                    <span>Predicted</span>
+                                    <span>{hasTracking ? 'Actual (DCS)' : 'Verify on DCS'}</span>
+                                    <span style={{ textAlign: 'right' }}>{hasTracking ? 'Delta %' : ''}</span>
+                                  </div>
+
+                                  {Object.entries(s.tag_values)
+                                    .filter(([tag]) => !tag.endsWith('.OP'))
+                                    .map(([tag, val]) => {
+                                      const dev = tr?.deviations?.[tag] as
+                                        | { predicted: number; actual: number; deviation_pct: number; unit: string }
+                                        | undefined
+                                      const deviating = dev && dev.deviation_pct > 5
+                                      return (
+                                        <div key={tag} style={{
+                                          display: 'grid', gridTemplateColumns: '6.5rem 1fr 1fr 5rem',
+                                          alignItems: 'center', padding: '0.3rem 0',
+                                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                                          fontFamily: 'var(--font-mono)',
+                                        }}>
+                                          <span style={{ fontSize: '0.78rem', fontWeight: 700, color: deviating ? '#FCA5A5' : '#7DD3FC' }}>
+                                            {tag}
+                                          </span>
+                                          <span style={{
+                                            fontSize: '0.8rem',
+                                            color: dev ? '#64748B' : '#CBD5E1',
+                                            textDecoration: dev ? 'line-through' : 'none',
+                                            fontWeight: dev ? 400 : 600,
+                                          }}>
+                                            {(typeof val === 'number' ? val : 0).toFixed(1)}
+                                            {dev?.unit && <span style={{ fontSize: '0.7rem', marginLeft: 2 }}>{dev.unit}</span>}
+                                          </span>
+                                          {dev ? (
+                                            <span style={{
+                                              fontSize: '0.82rem', fontWeight: 700,
+                                              color: deviating ? '#F87171' : '#34D399',
+                                              display: 'flex', alignItems: 'center', gap: '0.35rem',
+                                            }}>
+                                              <span style={{ width: 7, height: 7, borderRadius: '50%', background: deviating ? '#F87171' : '#34D399', display: 'inline-block', flexShrink: 0 }} />
+                                              {dev.actual.toFixed(1)}
+                                              {dev.unit && <span style={{ fontSize: '0.72rem', fontWeight: 400, color: '#94A3B8' }}>{' '}{dev.unit}</span>}
+                                            </span>
+                                          ) : (
+                                            <span style={{ fontSize: '0.75rem', color: '#475569', fontStyle: 'italic' }}>— pending</span>
+                                          )}
+                                          <span style={{
+                                            fontSize: '0.75rem', textAlign: 'right', fontWeight: 700,
+                                            color: dev ? (deviating ? '#F87171' : '#34D399') : 'transparent',
+                                          }}>
+                                            {dev ? `${dev.deviation_pct.toFixed(1)}%` : '—'}
+                                          </span>
+                                        </div>
+                                      )
+                                    })}
+
+                                  {tr && tr.suggest_reoptimize && (
+                                    <div style={{ paddingTop: '0.4rem' }}>
+                                      <button className="btn btn-sm"
+                                        style={{
+                                          fontSize: '0.75rem', padding: '0.25rem 0.7rem',
+                                          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.4)',
+                                          color: '#FCA5A5', fontWeight: 600,
+                                        }}
+                                        onClick={fetchOptimization}
+                                      >
+                                        Recompute with current conditions
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+
+                        <div style={{ fontSize: '0.7rem', color: '#475569', fontStyle: 'italic' }}>
+                          Timers auto-fire. If DCS readings deviate significantly from predicted, click Recompute.
+                        </div>
+                      </div>
+                    </div>
                   )}
                 </div>
               ) : (
@@ -926,7 +941,7 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                   : (applied
                       ? trackingResults.some(tr => tr?.suggest_reoptimize)
                       : isStale && !!recommendation)
-                    ? '⚠ Recompute (conditions changed)' : '⚡ Update Recommendation'
+                    ? 'Recompute (conditions changed)' : 'Update Recommendation'
                 }
               </button>
             </div>
@@ -985,9 +1000,11 @@ const Metric: React.FC<{ label: string; value: string; positive?: boolean }> = (
 
 const AlertRow: React.FC<{ alert: Alert }> = ({ alert: a }) => (
   <div className={`alert-row ${a.severity}`} style={{ opacity: a.acknowledged ? 0.5 : 1 }}>
-    <span style={{ fontSize: '1rem', flexShrink: 0 }}>
-      {a.severity === 'critical' ? '⛔' : a.severity === 'warning' ? '⚠️' : 'ℹ️'}
-    </span>
+    <span style={{
+      width: 8, height: 8, borderRadius: '50%', flexShrink: 0, marginTop: 3,
+      background: a.severity === 'critical' ? '#EF4444' : a.severity === 'warning' ? '#F59E0B' : '#60A5FA',
+      display: 'inline-block',
+    }} />
     <div style={{ flex: 1, minWidth: 0 }}>
       <div className="font-semibold text-sm truncate">{a.tag_name} · {a.alert_type.replace(/_/g, ' ')}</div>
       <div className="text-xs text-muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

@@ -173,6 +173,9 @@ class OptimizationResult(Base):
     applied_by_id         = Column(Integer, ForeignKey("users.id"), nullable=True)
     applied_by_username   = Column(Text, nullable=True)
 
+    # FOPDT predicted trajectory — stored on apply so /tracking can compare later
+    predicted_trajectory  = Column(JSON, nullable=True)
+
     requested_by = relationship("User", foreign_keys=[requested_by_id])
     applied_by   = relationship("User", foreign_keys=[applied_by_id])
 

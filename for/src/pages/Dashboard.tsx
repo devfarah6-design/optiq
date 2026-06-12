@@ -61,9 +61,12 @@ const Dashboard: React.FC = () => {
   // ── Post-apply FOPDT tracking ──────────────────────────────────────────────
   const [appliedResultId, setAppliedResultId] = useState<number | null>(null)
   const [trackingResults, setTrackingResults] = useState<(TrackingOut | null)[]>([])
-  const currentTagsRef = useRef<Record<string, number>>({})
-  const timerIdsRef    = useRef<ReturnType<typeof setTimeout>[]>([])
-  const fopdtRef       = useRef<HTMLDivElement>(null)   // scroll target after apply
+  const [trackingFired,   setTrackingFired]   = useState<boolean[]>([])
+  const [checkingNow,     setCheckingNow]     = useState<boolean[]>([])
+  const currentTagsRef  = useRef<Record<string, number>>({})
+  const timerIdsRef     = useRef<ReturnType<typeof setTimeout>[]>([])
+  const intervalIdsRef  = useRef<ReturnType<typeof setInterval>[]>([])
+  const fopdtRef        = useRef<HTMLDivElement>(null)   // scroll target after apply
 
   // ── Staleness & drift ──────────────────────────────────────────────────────
   const age = ageLabel(recommendation?.computed_at)
@@ -80,31 +83,53 @@ const Dashboard: React.FC = () => {
     currentTagsRef.current = current?.tags ?? {}
   }, [current])
 
-  // Start FOPDT tracking timers after apply — fires at each predicted horizon
+  // Helper: fetch tracking for one horizon slot
+  const fetchTracking = useCallback(async (idx: number, rid: number) => {
+    try {
+      const res = await fopdtConfigApi.checkTracking(rid, currentTagsRef.current)
+      setTrackingResults(prev => { const u = [...prev]; u[idx] = res.data; return u })
+    } catch (e) {
+      console.error('Tracking check failed at slot', idx, e)
+    }
+  }, [])
+
+  // Manual "Check Now" per card
+  const checkNow = async (idx: number) => {
+    if (!appliedResultId) return
+    setCheckingNow(prev => { const u = [...prev]; u[idx] = true; return u })
+    await fetchTracking(idx, appliedResultId)
+    setCheckingNow(prev => { const u = [...prev]; u[idx] = false; return u })
+  }
+
+  // Start FOPDT tracking timers after apply — fires at each horizon, then polls every 60 s
   useEffect(() => {
     if (!applied || !appliedResultId || simulation.length === 0) return
     timerIdsRef.current.forEach(id => clearTimeout(id))
+    intervalIdsRef.current.forEach(id => clearInterval(id))
     timerIdsRef.current = []
+    intervalIdsRef.current = []
     setTrackingResults(new Array(simulation.length).fill(null))
+    setTrackingFired(new Array(simulation.length).fill(false))
+    setCheckingNow(new Array(simulation.length).fill(false))
 
+    const rid = appliedResultId
     simulation.forEach((step, idx) => {
-      const id = setTimeout(async () => {
-        try {
-          const res = await fopdtConfigApi.checkTracking(appliedResultId, currentTagsRef.current)
-          setTrackingResults(prev => {
-            const updated = [...prev]
-            updated[idx] = res.data
-            return updated
-          })
-        } catch (e) {
-          console.error('Tracking check failed at horizon', step.label, e)
-        }
+      const id = setTimeout(() => {
+        // Mark fired immediately so UI shows "checking" instead of "awaiting"
+        setTrackingFired(prev => { const u = [...prev]; u[idx] = true; return u })
+        fetchTracking(idx, rid)
+        // Poll every 60 s to refresh with fresh DCS readings
+        const iid = setInterval(() => fetchTracking(idx, rid), 60_000)
+        intervalIdsRef.current.push(iid)
       }, step.time_s * 1000)
       timerIdsRef.current.push(id)
     })
 
-    return () => { timerIdsRef.current.forEach(id => clearTimeout(id)) }
-  }, [applied, appliedResultId]) // eslint-disable-line react-hooks/exhaustive-deps
+    return () => {
+      timerIdsRef.current.forEach(id => clearTimeout(id))
+      intervalIdsRef.current.forEach(id => clearInterval(id))
+    }
+  }, [applied, appliedResultId, fetchTracking]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Optimisation ──────────────────────────────────────────────────────────
   const fetchOptimization = async () => {
@@ -778,6 +803,8 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
               }}>
                 {simulation.map((s, idx) => {
                   const tr = trackingResults[idx]
+                  const fired = trackingFired[idx] ?? false
+                  const checking = checkingNow[idx] ?? false
                   const hasTracking = !!tr && Object.keys(tr.deviations || {}).length > 0
                   const cardBorder = hasTracking
                     ? tr!.tracking_ok ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(239,68,68,0.4)'
@@ -827,6 +854,16 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                 DEVIATION {tr!.worst_deviation_pct.toFixed(1)}%
                               </span>
                             )
+                          ) : fired ? (
+                            <span style={{
+                              fontSize: '0.7rem', color: '#F59E0B',
+                              background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                              borderRadius: 4, padding: '0.12rem 0.5rem',
+                              display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+                            }}>
+                              <span style={{ width: 5, height: 5, borderRadius: '50%', background: '#F59E0B', display: 'inline-block' }} />
+                              CHECKING…
+                            </span>
                           ) : (
                             <span style={{
                               fontSize: '0.7rem', color: '#475569',
@@ -840,22 +877,36 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                           )}
                         </div>
 
-                        {/* KPI sub-row */}
-                        <div style={{ display: 'flex', gap: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-                          <span>
-                            <span style={{ color: '#475569' }}>Energy </span>
-                            <span style={{ color: '#7DD3FC', fontWeight: 600 }}>{s.energy.toFixed(2)}</span>
-                            {s.energy_delta_pct > 0.1 && (
-                              <span style={{ color: '#34D399', fontSize: '0.7rem', marginLeft: 3 }}>-{s.energy_delta_pct.toFixed(1)}%</span>
-                            )}
-                          </span>
-                          <span>
-                            <span style={{ color: '#475569' }}>Purity </span>
-                            <span style={{ color: '#C4B5FD', fontWeight: 600 }}>{s.purity.toFixed(2)}%</span>
-                            {s.purity_delta_pct > 0.02 && (
-                              <span style={{ color: '#34D399', fontSize: '0.7rem', marginLeft: 3 }}>+{s.purity_delta_pct.toFixed(2)}%</span>
-                            )}
-                          </span>
+                        {/* KPI sub-row + Check Now */}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem' }}>
+                          <div style={{ display: 'flex', gap: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+                            <span>
+                              <span style={{ color: '#475569' }}>Energy </span>
+                              <span style={{ color: '#7DD3FC', fontWeight: 600 }}>{s.energy.toFixed(2)}</span>
+                              {s.energy_delta_pct > 0.1 && (
+                                <span style={{ color: '#34D399', fontSize: '0.7rem', marginLeft: 3 }}>-{s.energy_delta_pct.toFixed(1)}%</span>
+                              )}
+                            </span>
+                            <span>
+                              <span style={{ color: '#475569' }}>Purity </span>
+                              <span style={{ color: '#C4B5FD', fontWeight: 600 }}>{s.purity.toFixed(2)}%</span>
+                              {s.purity_delta_pct > 0.02 && (
+                                <span style={{ color: '#34D399', fontSize: '0.7rem', marginLeft: 3 }}>+{s.purity_delta_pct.toFixed(2)}%</span>
+                              )}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => checkNow(idx)}
+                            disabled={checking}
+                            style={{
+                              fontSize: '0.65rem', padding: '0.15rem 0.5rem', borderRadius: 4,
+                              border: '1px solid rgba(100,116,139,0.35)', background: 'rgba(255,255,255,0.04)',
+                              color: checking ? '#475569' : '#94A3B8', cursor: checking ? 'default' : 'pointer',
+                              fontFamily: 'var(--font-mono)', flexShrink: 0,
+                            }}
+                          >
+                            {checking ? 'checking…' : 'Check Now'}
+                          </button>
                         </div>
                       </div>
 
@@ -920,7 +971,9 @@ ${alertsHtml || '<tr><td colspan="4" style="padding:12px;text-align:center;color
                                       {dev.unit && <span style={{ fontSize: '0.68rem', fontWeight: 400, color: '#475569' }}> {dev.unit}</span>}
                                     </span>
                                   ) : (
-                                    <span style={{ fontSize: '0.73rem', color: '#475569' }}>— awaiting</span>
+                                    <span style={{ fontSize: '0.73rem', color: fired ? '#F59E0B' : '#475569' }}>
+                                      {fired ? '— no tag match' : '— awaiting'}
+                                    </span>
                                   )}
                                   {hasTracking && (
                                     <span style={{

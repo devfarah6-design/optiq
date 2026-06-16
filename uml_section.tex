@@ -1,0 +1,291 @@
+\subsection{UML Modelling of the Proposed DSS}
+\label{sec:uml_modeling}
+
+Before writing a single line of implementation code, we modelled the
+proposed DSS using four Unified Modelling Language (UML) diagrams.
+Each diagram answers a different question about the system: who uses
+it, how it is structured internally, how its components communicate,
+and in what order the work gets done.
+
+%----------------------------------------------------------------
+\subsubsection{Use Case Diagram}
+%----------------------------------------------------------------
+
+The use case diagram answers the question: \textit{who interacts with
+the system, and what can each actor do?}  It defines the system
+boundary and maps every major function to the role that is allowed
+to trigger it.
+
+The system defines five human roles organised in a strict privilege
+hierarchy.  A \textbf{Viewer} has read-only access: they can monitor
+live KPIs on the dashboard, consult the alert history, and view
+optimisation summaries, but cannot initiate any action that modifies
+system state.  An \textbf{Operator} can do everything a Viewer can,
+and additionally request optimisation runs, interact with the AI
+setpoint advisor, and acknowledge active alerts.  An
+\textbf{Engineer} has full operational authority: they can review
+optimisation recommendations, click the \textit{I Applied It} button
+to confirm setpoint application, and consult the FOPDT process
+tracking panel to verify that the plant responded as predicted.  A
+\textbf{Company Administrator} controls the configuration scope of
+their own plant: they can manage sites, distillation columns, model
+parameters, and FOPDT dynamics settings.  A \textbf{System
+Administrator} has unrestricted access, including user management
+across companies and global application configuration.
+
+In addition to human actors, four software actors interact with the
+system.  The \textbf{DCS/SCADA data source} pushes real-time sensor
+readings into the ingestion pipeline via WebSocket.  The
+\textbf{ML prediction engine} evaluates the current process state
+and returns simultaneous estimates of energy consumption and product
+purity.  The \textbf{FOPDT simulation engine} is invoked after an
+engineer confirms setpoint application: it computes the expected
+plant trajectory at $+5$, $+15$, and $+30$ minutes using the
+First-Order Plus Dead Time model for each controlled loop, and
+stores the predicted trajectory for subsequent comparison with live
+DCS readings.  The \textbf{rule-based monitoring module} checks
+sensor health at each ingestion cycle and generates alerts.
+Separating these as explicit actors makes clear that the DSS does
+not operate in isolation --- it is embedded in a larger industrial
+data ecosystem.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/usecase.png}
+    \caption{Use Case Diagram of the proposed DSS. The five human
+             roles (Viewer, Operator, Engineer, Company Administrator,
+             System Administrator) and four software actors
+             (DCS/SCADA source, ML engine, FOPDT simulation engine,
+             monitoring module) interact with seven functional groups:
+             authentication, real-time monitoring, setpoint
+             optimisation, post-apply FOPDT tracking, alert
+             management, audit trail consultation, and system
+             administration.}
+    \label{fig:usecase}
+\end{figure}
+
+%----------------------------------------------------------------
+\subsubsection{Class Diagram}
+%----------------------------------------------------------------
+
+The class diagram answers the question: \textit{what are the main
+entities in the system, what data do they hold, and how are they
+related?}  It is a static, technology-independent view of the
+system's structure.
+
+The model is organised around three layers: organisational entities,
+process data entities, and analytical service classes.
+
+\paragraph{Organisational entities.}
+\textbf{Company} represents an industrial client, holding display
+configuration (brand colours, logo) and a reference to the external
+DCS endpoint from which sensor data is pulled.  \textbf{Site}
+represents a physical plant or branch belonging to a company.
+\textbf{DistillationColumn} represents one fractionation unit within
+a site, with a unique tag identifier, a reference to its surrogate
+model file, and a JSON configuration block that stores setpoint
+bounds and sensor mappings.  This three-level hierarchy
+(Company~$\rightarrow$~Site~$\rightarrow$~Column) allows the same
+DSS instance to serve multiple industrial clients without any data
+cross-contamination.  \textbf{User} stores credentials, role, and a
+foreign-key link to the company they belong to.
+
+\paragraph{Process data entities.}
+\textbf{Prediction} stores the output of the ML engine for a given
+ingestion cycle: predicted energy consumption, product purity, and
+butane flow, together with an outlier flag and a stability score.
+\textbf{OptimizationResult} stores the complete snapshot of each
+optimisation run, including current and recommended setpoints, the
+predicted energy savings and purity improvement, the identity of the
+requesting user, and two application-tracking fields: an
+\textit{applied} flag with an \textit{applied\_at} timestamp set
+when the engineer clicks \textit{I Applied It}, and a
+\textit{predicted\_trajectory} JSON column that persists the
+per-horizon FOPDT simulation output at the moment of application so
+that the tracking endpoint can compare it against live DCS readings
+later.  \textbf{Alert} represents an anomaly event with a type,
+severity level, and the sensor tag that triggered it.
+\textbf{AuditLog} is an append-only record of every protected action
+in the system, capturing the username, role, HTTP endpoint, action
+label, and response code; this table is the technical foundation of
+the full traceability feature.
+
+\paragraph{Analytical service classes.}
+\textbf{PredictionEngine} takes a process state and returns a
+Prediction using the XGBoost surrogate model.
+\textbf{OptimisationEngine} runs Differential Evolution over the
+surrogate to return the recommended setpoints and gain estimates.
+\textbf{FopdtSimulator} is invoked on apply: it uses the per-loop
+$K$, $\tau$, and $\theta$ parameters configured by the administrator
+to compute the expected tag values at each time horizon and stores
+the result in the OptimizationResult.
+\textbf{TrackingService} is called at each horizon after apply: it
+fetches the stored trajectory, compares it with the live DCS
+readings supplied by the frontend, computes per-tag deviation
+percentages, and returns a tracking score and a re-optimise flag.
+\textbf{AnomalyDetector} checks sensor health at each ingestion
+cycle and generates Alerts.  Keeping the service classes separate
+from the data entities means that any algorithm can be swapped ---
+for example, replacing the XGBoost surrogate with a GRU --- without
+changing the rest of the system.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/classdia.png}
+    \caption{Conceptual Class Diagram of the proposed DSS. The three
+             organisational entities (Company, Site,
+             DistillationColumn) anchor the multi-tenant structure.
+             Process data entities (Prediction, OptimizationResult,
+             Alert, AuditLog) record every system event. Analytical
+             service classes (PredictionEngine, OptimisationEngine,
+             FopdtSimulator, TrackingService, AnomalyDetector)
+             encapsulate the algorithmic logic independently of the
+             data layer.}
+    \label{fig:classdiagram}
+\end{figure}
+
+%----------------------------------------------------------------
+\subsubsection{Sequence Diagram}
+%----------------------------------------------------------------
+
+The sequence diagram answers the question: \textit{in what order do
+the system components exchange messages during a real interaction?}
+It shows the dynamic behaviour of the system across time, which the
+class diagram cannot capture.
+
+Five operational scenarios are represented in the diagram.  The
+\textbf{authentication flow} shows the user submitting credentials,
+the backend verifying them against the database and checking the
+user's role and company membership, and a signed JWT token being
+returned to the frontend and stored for subsequent requests.  The
+\textbf{real-time data pipeline} shows the continuous ingestion
+loop: at each cycle the backend receives a new sensor reading via
+WebSocket, passes it to the prediction engine and the rule-based
+monitor in parallel, stores the resulting Prediction in the
+database, and broadcasts a live update to the frontend.  If the
+monitor raises an alert, it is stored in the Alert table and an
+AuditLog entry is created; the alert is pushed to the frontend in
+the same broadcast cycle.  The \textbf{optimisation request flow}
+shows the engineer requesting an optimisation from the dashboard:
+the backend validates the JWT and role, calls the Differential
+Evolution engine (which internally queries the XGBoost surrogate in
+a loop), stores the result as an OptimizationResult, writes an
+AuditLog entry, and returns the recommended setpoints and predicted
+gains to the frontend.  The \textbf{apply and FOPDT tracking flow}
+shows the engineer clicking \textit{I Applied It}: the backend marks
+the OptimizationResult as applied, immediately invokes
+FopdtSimulator to compute the predicted plant trajectory at $+5$,
+$+15$, and $+30$ minutes, persists this trajectory in the
+\textit{predicted\_trajectory} column, writes a second AuditLog
+entry with the action label \texttt{APPLY\_RECOMMENDATION}, and
+confirms success to the frontend.  The frontend then starts three
+countdown timers; when each fires, it sends the current live DCS
+tag values to the \texttt{/tracking} endpoint, which calls
+TrackingService, compares them with the stored trajectory, and
+returns per-tag deviations, a tracking score, and a
+re-optimise flag that the frontend renders as a colour-coded status
+panel.  The \textbf{alert acknowledgement flow} shows the operator
+marking an alert as resolved, triggering a database update, an
+AuditLog entry, and a confirmation back to the interface.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/sequence.png}
+    \caption{Sequence Diagram of the proposed DSS, covering five
+             operational scenarios: user authentication with role
+             verification, real-time data ingestion and parallel
+             prediction, optimisation request and setpoint
+             recommendation, post-apply FOPDT simulation and
+             horizon-triggered process tracking, and alert
+             acknowledgement. Every protected action produces an
+             AuditLog entry.}
+    \label{fig:sequencediagram}
+\end{figure}
+
+%----------------------------------------------------------------
+\subsubsection{Activity Diagram}
+%----------------------------------------------------------------
+
+The activity diagram answers the question: \textit{what is the
+overall operational workflow of the system, from startup to decision
+output?}  Unlike the sequence diagram, which focuses on message
+exchanges between components, the activity diagram emphasises
+decision points and parallel flows within the system as a whole.
+
+The workflow begins with user authentication and role resolution.  On
+success, the system identifies the active column context from the
+engineer's company and site assignment, enabling the multi-column
+generalisation: if the company operates several distillation units,
+the engineer selects the target column from a menu and all
+subsequent model calls and setpoint recommendations are routed to
+the column-specific surrogate and configuration.  The backend then
+starts the ingestion service, which enters a continuous loop.  At
+each iteration, a new process state is received from the DCS data
+source; the prediction model and the rule-based anomaly detector run
+in parallel on this state.  The prediction result is persisted to
+the database and pushed to the frontend.  If the anomaly detector
+finds a fault, the alert is classified by type and severity, stored,
+logged to the AuditLog, and sent to the frontend in real time.
+
+When the engineer requests a setpoint optimisation, the workflow
+branches: the Differential Evolution engine generates candidate
+setpoints, the XGBoost surrogate evaluates them, a feasibility check
+discards candidates that violate the minimum purity or product-flow
+constraints, and the iteration continues until the convergence
+criterion is met or the maximum iteration count is reached.  The
+best feasible setpoint is returned, stored as an OptimizationResult,
+and displayed to the engineer, who reviews it before any change is
+applied to the real process.
+
+If the engineer confirms the recommendation by clicking \textit{I
+Applied It}, the workflow enters the post-apply branch.  The FOPDT
+simulator runs immediately, computing the expected tag values at
+$+5$, $+15$, and $+30$ minutes for each controlled loop using the
+First-Order Plus Dead Time step-response model; this trajectory is
+stored alongside the OptimizationResult.  Three horizon timers are
+started in the frontend.  At each horizon, the frontend queries the
+live DCS readings and calls the tracking endpoint; the tracking
+service compares the actual readings with the stored trajectory and
+computes per-tag deviation percentages.  If the worst-case deviation
+exceeds 40\% or the overall tracking score falls below 0.5, the
+system raises a re-optimise flag, indicating a disturbance,
+equipment fault, or FOPDT parameter mismatch that warrants a new
+optimisation cycle.  Otherwise, the system confirms good tracking
+and the loop continues until all three horizons have been evaluated.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{figures/activity.png}
+    \caption{Activity Diagram of the proposed DSS, showing the
+             end-to-end operational workflow from user login and
+             column selection, through continuous data ingestion with
+             parallel prediction and anomaly detection, constrained
+             Differential Evolution optimisation, operator review,
+             post-apply FOPDT simulation, and horizon-triggered
+             process tracking with automatic re-optimise detection.}
+    \label{fig:activitydiagram}
+\end{figure}
+
+%----------------------------------------------------------------
+\subsubsection{Summary}
+%----------------------------------------------------------------
+
+The four diagrams provide complementary and non-overlapping views of
+the proposed DSS.  The use case diagram establishes what the system
+must do and for whom, capturing the five-role privilege hierarchy and
+the new post-apply tracking and audit use cases introduced in this
+work.  The class diagram defines what the system is made of,
+highlighting the three-level multi-tenant organisational hierarchy
+(Company, Site, DistillationColumn), the FOPDT trajectory
+persistence in OptimizationResult, and the append-only AuditLog
+that underpins full operational traceability.  The sequence diagram
+shows how the components interact during execution, with particular
+attention to the apply-and-track flow that distinguishes this system
+from a simple recommendation tool.  The activity diagram describes
+the full operational logic from startup to post-apply verification,
+including the decision branch that triggers a new optimisation cycle
+when the process deviates significantly from the predicted FOPDT
+trajectory.  Together they ensure that the implementation phase
+begins from a clearly specified and internally consistent design, and
+that anyone reading this thesis can understand how the system works
+without access to the source code.
